@@ -18,3 +18,18 @@ assert_equal(result['outputs'][0]['ok'], True)
 
     assert report["status"] == "passed"
     assert report["assertions"] == 1
+
+
+def test_python_script_blocks_unsafe_statements(tmp_path) -> None:
+    repo = ModuleRepository(tmp_path)
+    repo.save(Module(module_id="m1", name="M1", flow=[{"type": "emit", "payload": {"ok": True}}]))
+
+    runner = ScriptTestRunner(repo, Simulator())
+    report = runner.run(
+        """
+import os
+"""
+    )
+
+    assert report["status"] == "failed"
+    assert "Unsupported statement: Import" in report["errors"][0]

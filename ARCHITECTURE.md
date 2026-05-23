@@ -6,6 +6,11 @@ repository **must** be checked against these rules. When a rule no longer fits,
 the rule is amended *first* in this document, in the same pull request that
 changes the code.
 
+> For the **product vision and the feature-request log** — what this software
+> is supposed to do and why — see [`PRODUCT.md`](PRODUCT.md). `ARCHITECTURE.md`
+> answers *how* the code is organised; `PRODUCT.md` answers *what* it is
+> supposed to do.
+
 ## 1. Goals
 
 1. **Modifiability.** Adding a new step type, a new node kind, a new persistence

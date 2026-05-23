@@ -25,6 +25,10 @@ A browser-based playground for modeling executable processes as nested modules.
 See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the architectural goals, layering
 rules, and the do/don't list. **Read it before adding features.**
 
+For the **product vision, the feature-request log, and "what is this software
+supposed to do"**, see [`PRODUCT.md`](PRODUCT.md). Read it before *deciding*
+what to build.
+
 Layout at a glance:
 
 - `processor_playground/models.py` — domain dataclasses (leaf, no I/O)

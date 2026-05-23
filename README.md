@@ -64,6 +64,27 @@ To stop and remove the container:
 docker stop processor-playground && docker rm processor-playground
 ```
 
+## Run in VS Code Dev Container
+
+This repository includes `.devcontainer/devcontainer.json`, so you can launch it directly in VS Code.
+
+1. Open the folder in VS Code.
+2. Run **Dev Containers: Reopen in Container** from the Command Palette.
+3. Once the container is created, dependencies are installed automatically via `pip install -e .[dev]`.
+4. Start the API:
+
+```bash
+python -m uvicorn processor_playground.api:app --host 0.0.0.0 --port 8000
+```
+
+VS Code forwards port `8000` and will open the app in your browser.
+
+If you opened the container before this devcontainer setup was updated, run **Dev Containers: Rebuild Container** once. If `python -m uvicorn ...` still reports `No module named uvicorn`, run the server with:
+
+```bash
+python3.11 -m uvicorn processor_playground.api:app --host 0.0.0.0 --port 8000
+```
+
 ## Test
 
 ```bash

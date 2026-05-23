@@ -8,13 +8,13 @@
 // It does NOT own component markup (that's in components.js / nodes.js)
 // and does NOT own fetch (that's in lib/api.js).
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { addEdge, applyEdgeChanges, applyNodeChanges } from 'reactflow';
 
 import { html, debounce, genId } from './lib/html.js';
 import { apiGet, apiPut, apiDelete } from './lib/api.js';
-import { NODE_TYPES, DEFAULT_NODE_LABELS } from './nodes.js';
+import { DEFAULT_NODE_LABELS } from './nodes.js';
 import {
   EDGE_MARKER,
   PropertiesPanel,
@@ -290,11 +290,6 @@ function App() {
       showStatus(`Delete failed: ${error.message}`, true);
     }
   }, [showStatus]);
-
-  // Memo retained for parity with the previous structure.
-  // NODE_TYPES is module-level and stable.
-  // eslint-disable-next-line no-unused-vars
-  const _nodeTypes = useMemo(() => NODE_TYPES, []);
 
   return html`
     <div id="app">

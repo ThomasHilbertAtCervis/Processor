@@ -90,7 +90,7 @@ def default_module_template() -> dict[str, Any]:
         "flow": [
             {"type": "set_var", "name": "counter", "value": 1},
             {"type": "datastore_write", "key": "counter", "value": 1},
-            {"type": "api_call", "url": "https://example.invalid", "mock_response": {"ok": True}},
+            {"type": "api_call", "url": "https://api.example.com", "mock_response": {"ok": True}},
             {"type": "emit", "event": "finished", "payload": {"ok": True}},
         ],
         "submodules": [],

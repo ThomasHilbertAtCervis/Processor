@@ -4,116 +4,21 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Process Playground</title>
-    <style>
-      body { font-family: Arial, sans-serif; margin: 2rem; background: #f6f7fb; }
-      .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
-      textarea { width: 100%; min-height: 260px; font-family: monospace; }
-      button { margin-right: 0.5rem; margin-top: 0.5rem; }
-      .card { background: #fff; border-radius: 8px; padding: 1rem; box-shadow: 0 1px 3px rgba(0,0,0,0.15); }
-      pre { background: #10141f; color: #d4f4dd; padding: 1rem; border-radius: 6px; overflow: auto; }
-      input { width: 100%; padding: 0.5rem; margin-bottom: 0.5rem; }
-    </style>
+    <link rel="stylesheet" href="https://unpkg.com/reactflow@11/dist/style.css" />
+    <link rel="stylesheet" href="/static/style.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "react": "https://esm.sh/react@18",
+          "react-dom/client": "https://esm.sh/react-dom@18/client",
+          "htm/react": "https://esm.sh/htm@3/react",
+          "reactflow": "https://esm.sh/reactflow@11?deps=react@18,react-dom@18"
+        }
+      }
+    </script>
   </head>
   <body>
-    <h1>Process Playground</h1>
-    <p>Design nested modules, persist them, run simulations, and execute Python script tests.</p>
-
-    <div class="grid">
-      <section class="card">
-        <h3>Module editor</h3>
-        <label for="module-id">Module ID</label>
-        <input id="module-id" value="example-module" />
-        <textarea id="module-json"></textarea>
-        <div>
-          <button id="load-template">Load template</button>
-          <button id="save-module">Save module</button>
-          <button id="run-module">▶ Play</button>
-        </div>
-      </section>
-
-      <section class="card">
-        <h3>Python test script</h3>
-        <textarea id="script">result = run_module("example-module", mocks={"db": {"rows": 3}})
-assert_equal(result["outputs"][0]["ok"], True)</textarea>
-        <div>
-          <button id="run-test">Run script test</button>
-          <button id="list-modules">List modules</button>
-        </div>
-      </section>
-    </div>
-
-    <h3>Result</h3>
-    <pre id="result">Ready.</pre>
-
-    <script>
-      const moduleId = document.getElementById("module-id");
-      const moduleJson = document.getElementById("module-json");
-      const scriptBox = document.getElementById("script");
-      const result = document.getElementById("result");
-
-      const show = (obj) => {
-        result.textContent = typeof obj === "string" ? obj : JSON.stringify(obj, null, 2);
-      };
-
-      async function fetchJson(url, options) {
-        const response = await fetch(url, {
-          headers: { "Content-Type": "application/json" },
-          ...options,
-        });
-        const body = await response.json();
-        if (!response.ok) throw new Error(body.detail || JSON.stringify(body));
-        return body;
-      }
-
-      document.getElementById("load-template").onclick = async () => {
-        try {
-          const tmpl = await fetchJson("/api/templates/default-module");
-          moduleId.value = tmpl.module_id;
-          moduleJson.value = JSON.stringify(tmpl, null, 2);
-          show("Template loaded.");
-        } catch (err) {
-          show(String(err));
-        }
-      };
-
-      document.getElementById("save-module").onclick = async () => {
-        try {
-          const payload = JSON.parse(moduleJson.value);
-          await fetchJson(`/api/modules/${moduleId.value}`, { method: "PUT", body: JSON.stringify(payload) });
-          show("Module saved.");
-        } catch (err) {
-          show(String(err));
-        }
-      };
-
-      document.getElementById("run-module").onclick = async () => {
-        try {
-          const run = await fetchJson(`/api/modules/${moduleId.value}/run`, { method: "POST", body: JSON.stringify({ input_data: {}, mocks: {} }) });
-          show(run);
-        } catch (err) {
-          show(String(err));
-        }
-      };
-
-      document.getElementById("run-test").onclick = async () => {
-        try {
-          const report = await fetchJson("/api/tests/run", { method: "POST", body: JSON.stringify({ script: scriptBox.value }) });
-          show(report);
-        } catch (err) {
-          show(String(err));
-        }
-      };
-
-      document.getElementById("list-modules").onclick = async () => {
-        try {
-          const modules = await fetchJson("/api/modules");
-          show(modules);
-        } catch (err) {
-          show(String(err));
-        }
-      };
-
-      document.getElementById("load-template").click();
-    </script>
+    <div id="root"></div>
+    <script type="module" src="/static/app.js"></script>
   </body>
 </html>

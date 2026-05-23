@@ -31,3 +31,11 @@ class ModuleRepository:
         for item in sorted(self.base_path.glob("*.json")):
             modules.append(Module.from_dict(json.loads(item.read_text(encoding="utf-8"))))
         return modules
+
+
+    def delete(self, module_id: str) -> bool:
+        target = self._path(module_id)
+        if target.exists():
+            target.unlink()
+            return True
+        return False

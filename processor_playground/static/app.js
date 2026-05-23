@@ -1,5 +1,5 @@
-import { html } from 'htm/react';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import htm from 'htm';
 import { createRoot } from 'react-dom/client';
 import ReactFlow, {
   Background,
@@ -12,6 +12,10 @@ import ReactFlow, {
   applyEdgeChanges,
   applyNodeChanges,
 } from 'reactflow';
+
+// Bind htm to the *same* React instance used by ReactFlow.
+// Using the htm/react subpath bundles a second React copy which breaks hooks.
+const html = htm.bind(React.createElement);
 
 const PRIMITIVES = ['int', 'decimal', 'string', 'bool', 'timestamp', 'any'];
 // esm.sh/reactflow builds can differ slightly in enum shape, so keep a string fallback.

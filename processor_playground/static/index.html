@@ -4,21 +4,43 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Process Playground</title>
-    <link rel="stylesheet" href="https://unpkg.com/reactflow@11/dist/style.css" />
+    <!--
+      Pin explicit patch versions so the three CDN fetches (react, react-dom,
+      reactflow) all resolve to the exact same React build.  Using the bare
+      major ("react@18") can race across CDN edge-caches and return slightly
+      different resolved versions, giving two React instances which breaks hooks.
+    -->
+    <link rel="stylesheet" href="https://esm.sh/reactflow@11.11.4/dist/style.css" />
     <link rel="stylesheet" href="/static/style.css" />
     <script type="importmap">
       {
         "imports": {
-          "react": "https://esm.sh/react@18",
-          "react-dom/client": "https://esm.sh/react-dom@18/client",
-          "htm/react": "https://esm.sh/htm@3/react",
-          "reactflow": "https://esm.sh/reactflow@11?deps=react@18,react-dom@18"
+          "react":          "https://esm.sh/react@18.3.1",
+          "react/jsx-runtime": "https://esm.sh/react@18.3.1/jsx-runtime",
+          "react-dom":      "https://esm.sh/react-dom@18.3.1",
+          "react-dom/client":"https://esm.sh/react-dom@18.3.1/client",
+          "htm":            "https://esm.sh/htm@3.1.1",
+          "reactflow":      "https://esm.sh/reactflow@11.11.4?deps=react@18.3.1,react-dom@18.3.1"
         }
       }
     </script>
   </head>
   <body>
+    <!-- Visible error banner: shown only when the JS module fails to load/run -->
+    <div id="js-error" style="display:none;position:fixed;inset:0;z-index:9999;background:#1e2128;color:#ff9b9b;font-family:monospace;padding:2rem;white-space:pre-wrap;overflow:auto"></div>
     <div id="root"></div>
+    <script>
+      window.addEventListener('error', function(e) {
+        var el = document.getElementById('js-error');
+        el.style.display = 'block';
+        el.textContent += (e.message || String(e)) + '\n' + (e.filename ? e.filename + ':' + e.lineno : '') + '\n\n';
+      });
+      window.addEventListener('unhandledrejection', function(e) {
+        var el = document.getElementById('js-error');
+        el.style.display = 'block';
+        el.textContent += 'Unhandled promise rejection:\n' + (e.reason?.stack || String(e.reason)) + '\n\n';
+      });
+    </script>
     <script type="module" src="/static/app.js"></script>
   </body>
 </html>

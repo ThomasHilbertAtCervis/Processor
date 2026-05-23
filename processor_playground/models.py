@@ -84,7 +84,7 @@ class Module:
 
     @staticmethod
     def from_dict(payload: dict[str, Any]) -> "Module":
-        legacy_interfaces = payload.get("interfaces", {})
+        legacy_interfaces = payload.get("interfaces") or {}
         raw_inputs = payload.get("inputs")
         raw_outputs = payload.get("outputs")
         if raw_inputs is None:

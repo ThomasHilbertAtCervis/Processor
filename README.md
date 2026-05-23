@@ -22,12 +22,20 @@ A browser-based playground for modeling executable processes as nested modules.
 
 ## Architecture
 
-- `processor_playground/models.py`: module model
-- `processor_playground/repository.py`: JSON persistence layer
-- `processor_playground/simulator.py`: simulation engine
-- `processor_playground/testing.py`: Python script test runner
-- `processor_playground/api.py`: FastAPI API + static UI host
-- `processor_playground/static/index.html`: browser playground
+See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the architectural goals, layering
+rules, and the do/don't list. **Read it before adding features.**
+
+Layout at a glance:
+
+- `processor_playground/models.py` — domain dataclasses (leaf, no I/O)
+- `processor_playground/_json_repository.py` — generic JSON repository base
+- `processor_playground/repository.py` / `data_type_repository.py` — thin concrete repositories
+- `processor_playground/scripting.py` — safe AST-based Python interpreter
+- `processor_playground/simulator.py` — simulation engine (step-handler registry)
+- `processor_playground/testing.py` — Python script test runner
+- `processor_playground/templates.py` — default/example payloads
+- `processor_playground/api.py` — FastAPI routes + composition root (thin adapter)
+- `processor_playground/static/` — frontend (entry `app.js`; `lib/`, `nodes.js`, `components.js`)
 
 ## Run
 

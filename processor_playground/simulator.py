@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from .models import Module
+from .scripting import SafeScriptInterpreter
 
 
 @dataclass
@@ -111,7 +112,7 @@ class Simulator:
                     "events": state.events,
                     "result": None,
                 }
-                exec(step.get("code", "result = None"), {"__builtins__": {}}, local_env)
+                SafeScriptInterpreter(local_env).run(step.get("code", "result = None"))
                 last = local_env.get("result")
             else:
                 raise ValueError(f"Unknown step type: {step_type}")

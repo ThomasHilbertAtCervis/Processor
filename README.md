@@ -38,6 +38,32 @@ python -m uvicorn processor_playground.api:app --host 0.0.0.0 --port 8000
 
 Then open `http://localhost:8000`.
 
+## Run with Docker
+
+Build the image:
+
+```bash
+docker build -t processor-playground .
+```
+
+Start the container (module definitions are persisted in a named volume so they survive restarts):
+
+```bash
+docker run -d \
+  --name processor-playground \
+  -p 8000:8000 \
+  -v processor-playground-storage:/app/storage \
+  processor-playground
+```
+
+Then open `http://localhost:8000`.
+
+To stop and remove the container:
+
+```bash
+docker stop processor-playground && docker rm processor-playground
+```
+
 ## Test
 
 ```bash

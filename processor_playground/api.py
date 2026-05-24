@@ -188,11 +188,46 @@ def run_module(
     module = modules.get(module_id)
     if not module:
         raise HTTPException(status_code=404, detail="Module not found")
+    # ``submodule`` nodes reference other top-level modules by id. The
+    # simulator expects those to be embedded in ``module.submodules`` — so
+    # we resolve every referenced module from the repository and inject it
+    # here, recursively, before kicking off the run. This keeps the
+    # simulator free of repository concerns and lets the UI store
+    # submodules by reference instead of duplicating their graphs.
+    try:
+        _embed_referenced_submodules(module, modules)
+    except KeyError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return sim.run(
         module,
         input_signal=payload.input_signal,
         input_value=payload.input_value,
     )
+
+
+def _embed_referenced_submodules(
+    module: Any, repo: ModuleRepository, seen: set[str] | None = None
+) -> None:
+    seen = seen or set()
+    if module.module_id in seen:
+        return
+    seen.add(module.module_id)
+    existing_ids = {sub.module_id for sub in module.submodules}
+    for node in module.nodes:
+        if node.type != "submodule":
+            continue
+        sub_id = node.data.get("module_id") or node.data.get("moduleId")
+        if not sub_id or sub_id in existing_ids:
+            continue
+        sub = repo.get(sub_id)
+        if sub is None:
+            raise KeyError(
+                f"Submodule '{sub_id}' referenced by node '{node.id}' "
+                f"does not exist in the repository."
+            )
+        module.submodules.append(sub)
+        existing_ids.add(sub_id)
+        _embed_referenced_submodules(sub, repo, seen)
 
 
 @app.get("/api/data-types")

@@ -304,7 +304,10 @@ class Simulator:
     def _activate_submodule(
         self, frame: _Frame, node: Node, port_name: str, value: Any
     ) -> None:
-        submodule_id = node.data.get("module_id")
+        # Accept both ``module_id`` (current) and ``moduleId`` (legacy
+        # camelCase written by older UI builds) so existing storage files
+        # don't have to be migrated to be runnable.
+        submodule_id = node.data.get("module_id") or node.data.get("moduleId")
         if not submodule_id:
             raise SimulatorError(
                 f"submodule node '{node.id}' has no 'module_id' in its data"

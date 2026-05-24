@@ -185,14 +185,14 @@ export function PropertiesPanel({ selected, nodes, edges, onUpdateNode, onUpdate
             <div className="prop-row">
               <label>Sub-module</label>
               <select
-                value=${localData.moduleId || ''}
+                value=${localData.module_id || ''}
                 onChange=${(event) => {
                   const module = modules.find((candidate) => candidate.module_id === event.target.value);
-                  setField('moduleId', event.target.value);
+                  setField('module_id', event.target.value);
                   if (module) {
                     setLocalData((previous) => ({
                       ...previous,
-                      moduleId: module.module_id,
+                      module_id: module.module_id,
                       label: module.name,
                       inputs: module.inputs || [],
                       outputs: module.outputs || [],

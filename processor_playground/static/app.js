@@ -87,6 +87,40 @@ function makeNodeDefaults(type, label) {
   };
 }
 
+// Module interface nodes whose signal_name was never set (legacy data, or the
+// user cleared the field) silently disappear from the derived inputs/outputs
+// list and break ``Simulator.run``. Whenever we load a module we backfill an
+// auto-numbered default name so every interface node is functional from the
+// moment the user opens the module.
+function backfillInterfaceSignalNames(nodes) {
+  const takenInputs = new Set();
+  const takenOutputs = new Set();
+  for (const node of nodes) {
+    const name = node.data && node.data.signal_name;
+    if (!name) continue;
+    if (node.type === 'module_input') takenInputs.add(name);
+    if (node.type === 'module_output') takenOutputs.add(name);
+  }
+  const pickName = (taken, base) => {
+    let candidate = base;
+    let counter = 2;
+    while (taken.has(candidate)) {
+      candidate = `${base}_${counter}`;
+      counter += 1;
+    }
+    taken.add(candidate);
+    return candidate;
+  };
+  return nodes.map((node) => {
+    if (node.type !== 'module_input' && node.type !== 'module_output') return node;
+    const existing = node.data && node.data.signal_name;
+    if (existing) return node;
+    const base = node.type === 'module_input' ? 'input' : 'output';
+    const name = pickName(node.type === 'module_input' ? takenInputs : takenOutputs, base);
+    return { ...node, data: { ...(node.data || {}), signal_name: name } };
+  });
+}
+
 function App() {
   const [modules, setModules] = useState([]);
   const [dataTypes, setDataTypes] = useState([]);
@@ -163,7 +197,7 @@ function App() {
     const modulePayload = await apiGet(`/api/modules/${moduleId}`);
     setCurrentModuleId(moduleId);
     setCurrentModule(modulePayload);
-    setNodes((modulePayload.nodes || []).map(hydrateNodeForFlow));
+    setNodes(backfillInterfaceSignalNames((modulePayload.nodes || []).map(hydrateNodeForFlow)));
     setEdges(modulePayload.edges || []);
     setSelected(null);
     return modulePayload;

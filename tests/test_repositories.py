@@ -108,3 +108,44 @@ class TestDataTypeRepository:
         assert loaded is not None
         assert loaded.kind == "array"
         assert loaded.element_type == "string"
+
+
+# ------------------------------------------------------- DatabaseRepository
+
+from processor_playground.database_repository import DatabaseRepository
+from processor_playground.models import Database
+
+
+class TestDatabaseRepository:
+    def test_creates_storage_directory(self, tmp_path: Path) -> None:
+        target = tmp_path / "dbs"
+        DatabaseRepository(target)
+        assert target.is_dir()
+
+    def test_round_trip(self, tmp_path: Path) -> None:
+        repo = DatabaseRepository(tmp_path)
+        repo.save(
+            Database(
+                name="shop",
+                tables={
+                    "customer": [{"id": 1, "name": "Alice"}],
+                    "order": [],
+                },
+            )
+        )
+        loaded = repo.get("shop")
+        assert loaded is not None
+        assert loaded.name == "shop"
+        assert loaded.tables == {
+            "customer": [{"id": 1, "name": "Alice"}],
+            "order": [],
+        }
+
+    def test_list_and_delete(self, tmp_path: Path) -> None:
+        repo = DatabaseRepository(tmp_path)
+        repo.save(Database(name="a"))
+        repo.save(Database(name="b"))
+        assert sorted(db.name for db in repo.list()) == ["a", "b"]
+        assert repo.delete("a") is True
+        assert [db.name for db in repo.list()] == ["b"]
+        assert repo.delete("a") is False

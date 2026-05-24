@@ -92,6 +92,7 @@ class Simulator:
         *,
         input_signal: str,
         input_value: Any,
+        databases: dict[str, dict[str, list[dict[str, Any]]]] | None = None,
     ) -> dict[str, Any]:
         """Run ``module`` by firing a single value into one of its inputs.
 
@@ -100,6 +101,11 @@ class Simulator:
         and the simulator walks the wires from there. Multiple inputs are
         not delivered in one call — if you need that, run the module
         twice.
+
+        ``databases`` is an optional snapshot mapping ``db_name -> {table:
+        rows}`` made visible to ``db_read`` / ``db_create`` nodes. Mutations
+        performed by ``db_create`` happen *in place* on the supplied dict
+        — the caller decides whether to persist them.
 
         Returns ``{ "outputs": {signal: [values]}, "trace": [...],
         "status": "complete" }``.
@@ -120,6 +126,10 @@ class Simulator:
         # that node. Single path of execution means at most one activation
         # waiting per node at any moment.
         self._waiting: dict[int, _PythonActivation] = {}
+        # db_* nodes accumulate inputs across activator calls until every
+        # declared input port has a value — then the query fires once.
+        self._db_buffers: dict[str, dict[str, Any]] = {}
+        self._databases: dict[str, dict[str, list[dict[str, Any]]]] = databases or {}
 
         frame = self._make_frame(module, record_top_level_output)
         self._fire_module_input(frame, input_signal, input_value)
@@ -354,6 +364,116 @@ class Simulator:
             f"it is a source-only node."
         )
 
+    # --------------------------------------------------- db_* activators
+
+    def _db_collect(
+        self, node: Node, port_name: str, value: Any
+    ) -> dict[str, Any] | None:
+        """Buffer one input fire for a db node. Returns the complete
+        ``{port_name: value}`` dict once every declared input port has
+        received a value (and clears the buffer), else ``None``."""
+        buffer = self._db_buffers.setdefault(node.id, {})
+        buffer[port_name] = value
+        needed = {port.name for port in node.inputs}
+        if needed and needed.issubset(buffer.keys()):
+            params = dict(buffer)
+            self._db_buffers.pop(node.id, None)
+            return params
+        return None
+
+    def _db_resolve_table(
+        self, node: Node, query_text: str
+    ) -> tuple[str, str, "Statement", list[dict[str, Any]]]:
+        from . import sql as _sql
+
+        db_name = node.data.get("database_name") or ""
+        if not db_name:
+            raise SimulatorError(
+                f"{node.type} node '{node.id}' has no 'database_name' in its data"
+            )
+        if db_name not in self._databases:
+            raise SimulatorError(
+                f"{node.type} node '{node.id}' references unknown database "
+                f"'{db_name}'"
+            )
+        if not query_text:
+            raise SimulatorError(
+                f"{node.type} node '{node.id}' has no 'query' in its data"
+            )
+        try:
+            stmt = _sql.parse(query_text)
+        except ValueError as exc:
+            raise SimulatorError(
+                f"{node.type} node '{node.id}' query parse error: {exc}"
+            ) from exc
+        tables = self._databases[db_name]
+        rows = tables.setdefault(stmt.table, [])
+        return db_name, stmt.table, stmt, rows
+
+    def _activate_db_read(
+        self, frame: _Frame, node: Node, port_name: str, value: Any
+    ) -> None:
+        from . import sql as _sql
+
+        params = self._db_collect(node, port_name, value)
+        if params is None:
+            return
+        query_text = node.data.get("query") or ""
+        db_name, table, stmt, rows = self._db_resolve_table(node, query_text)
+        if not isinstance(stmt, _sql.SelectStmt):
+            raise SimulatorError(
+                f"db_read node '{node.id}' expects a SELECT statement"
+            )
+        try:
+            result_rows = _sql.execute(stmt, table_rows=rows, params=params)
+        except (KeyError, ValueError) as exc:
+            raise SimulatorError(
+                f"db_read node '{node.id}' query error: {exc}"
+            ) from exc
+        self._result.trace.append(
+            {
+                "event": "db_read",
+                "node": node.id,
+                "database": db_name,
+                "table": table,
+                "row_count": len(result_rows),
+            }
+        )
+        out_port = node.outputs[0].name if node.outputs else "rows"
+        self._fire_from_node(frame, node.id, out_port, result_rows)
+
+    def _activate_db_create(
+        self, frame: _Frame, node: Node, port_name: str, value: Any
+    ) -> None:
+        from . import sql as _sql
+
+        params = self._db_collect(node, port_name, value)
+        if params is None:
+            return
+        query_text = node.data.get("query") or ""
+        db_name, table, stmt, rows = self._db_resolve_table(node, query_text)
+        if not isinstance(stmt, _sql.InsertStmt):
+            raise SimulatorError(
+                f"db_create node '{node.id}' expects an INSERT statement"
+            )
+        try:
+            inserted = _sql.execute(stmt, table_rows=rows, params=params)
+        except (KeyError, ValueError) as exc:
+            raise SimulatorError(
+                f"db_create node '{node.id}' query error: {exc}"
+            ) from exc
+        self._result.trace.append(
+            {
+                "event": "db_create",
+                "node": node.id,
+                "database": db_name,
+                "table": table,
+                "row": inserted,
+            }
+        )
+        out_port = node.outputs[0].name if node.outputs else "created"
+        self._fire_from_node(frame, node.id, out_port, inserted)
+
 
 def _find_port(ports: Iterable[Port], name: str) -> Port | None:
     for port in ports:
@@ -369,4 +489,6 @@ _ACTIVATORS: dict[str, Callable[[Simulator, _Frame, Node, str, Any], None]] = {
     "module_output": Simulator._activate_module_output,
     "python": Simulator._activate_python,
     "submodule": Simulator._activate_submodule,
+    "db_read": Simulator._activate_db_read,
+    "db_create": Simulator._activate_db_create,
 }

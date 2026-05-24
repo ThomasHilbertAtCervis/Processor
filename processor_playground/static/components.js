@@ -20,7 +20,7 @@ export const EDGE_MARKER = MarkerType?.ArrowClosed ?? 'arrowclosed';
 
 // --------------------------------------------------------- PropertiesPanel
 
-export function PropertiesPanel({ selected, nodes, edges, onUpdateNode, onUpdateEdge, dataTypes, primitives = [], modules }) {
+export function PropertiesPanel({ selected, nodes, edges, onUpdateNode, onUpdateEdge, dataTypes, primitives = [], modules, databases = [] }) {
   const [localData, setLocalData] = useState({});
   const item = selected
     ? selected.type === 'node'
@@ -178,6 +178,40 @@ export function PropertiesPanel({ selected, nodes, edges, onUpdateNode, onUpdate
                 Reads <code>inputs['port']</code>, writes <code>outputs['port'] = value</code>.
                 Sandboxed: <code>if</code>, <code>for</code>, arithmetic,
                 <code> len/range/min/max/sum</code>. No imports, no attribute access.
+              </div>
+            </div>
+          `}
+          ${(nodeType === 'db_read' || nodeType === 'db_create') && html`
+            <div className="prop-row">
+              <label>Database</label>
+              <select
+                value=${localData.database_name || ''}
+                onChange=${(event) => setField('database_name', event.target.value)}
+              >
+                <option value="">— select database —</option>
+                ${databases.map((db) => html`
+                  <option key=${db.name} value=${db.name}>${db.name}</option>
+                `)}
+              </select>
+            </div>
+            <div className="prop-row prop-row-code">
+              <label>Query (SQL-ish)</label>
+              <textarea
+                className="prop-code"
+                spellCheck=${false}
+                rows="5"
+                value=${localData.query || ''}
+                placeholder=${nodeType === 'db_read'
+                  ? 'SELECT * FROM customer WHERE region = :region'
+                  : 'INSERT INTO customer (name) VALUES (:name)'}
+                onInput=${(event) => setField('query', event.target.value)}
+              />
+              <div className="prop-hint">
+                Each <code>:placeholder</code> becomes an input port on this node.
+                Output port: <code>${nodeType === 'db_read' ? 'rows' : 'created'}</code>.
+                ${nodeType === 'db_read'
+                  ? ' Supported: SELECT * FROM <table> [WHERE col op val [AND ...]].'
+                  : ' Supported: INSERT INTO <table> (cols) VALUES (vals).'}
               </div>
             </div>
           `}
@@ -395,6 +429,173 @@ export function DataTypePanel({ dataTypes, primitives, onSave, onDelete }) {
 // rename a module signal, drop the corresponding node from the palette and
 // edit its ``Signal name`` / ``Data type`` in the properties panel.
 
+// --------------------------------------------------------- DatabasePanel
+
+export function DatabasePanel({
+  databases,
+  dataTypes,
+  onCreateDatabase,
+  onDeleteDatabase,
+  onAddTable,
+  onAddRow,
+  onDeleteRow,
+}) {
+  const [selectedName, setSelectedName] = useState(databases[0]?.name ?? null);
+  const [newDbName, setNewDbName] = useState('');
+  const [tableToAdd, setTableToAdd] = useState('');
+  const [rowDraft, setRowDraft] = useState({});
+
+  // Keep the selection valid as the list mutates.
+  useEffect(() => {
+    if (!databases.find((db) => db.name === selectedName)) {
+      setSelectedName(databases[0]?.name ?? null);
+    }
+  }, [databases, selectedName]);
+
+  const selected = databases.find((db) => db.name === selectedName) || null;
+  const selectedTables = selected ? Object.keys(selected.tables || {}) : [];
+  const [activeTable, setActiveTable] = useState(null);
+  useEffect(() => {
+    if (!selectedTables.includes(activeTable)) {
+      setActiveTable(selectedTables[0] || null);
+    }
+  }, [selectedName, selectedTables.join('|')]);
+
+  const tableType = activeTable
+    ? dataTypes.find((dt) => dt.type_id === activeTable)
+    : null;
+  const columns = (tableType && tableType.kind === 'struct')
+    ? (tableType.fields || []).map((field) => field.name)
+    : [];
+
+  const create = async () => {
+    const name = newDbName.trim();
+    if (!name) return;
+    await onCreateDatabase(name);
+    setNewDbName('');
+    setSelectedName(name);
+  };
+
+  const addTable = async () => {
+    if (!selected || !tableToAdd) return;
+    await onAddTable(selected.name, tableToAdd);
+    setActiveTable(tableToAdd);
+    setTableToAdd('');
+  };
+
+  const submitRow = async () => {
+    if (!selected || !activeTable) return;
+    const row = { ...rowDraft };
+    // Coerce numeric-looking strings — every field is a free text input.
+    for (const key of Object.keys(row)) {
+      const value = row[key];
+      if (typeof value === 'string' && value.trim() !== '' && !Number.isNaN(Number(value))) {
+        const num = Number(value);
+        if (String(num) === value.trim()) row[key] = num;
+      }
+    }
+    await onAddRow(selected.name, activeTable, row);
+    setRowDraft({});
+  };
+
+  const availableTypeIds = dataTypes
+    .map((dt) => dt.type_id)
+    .filter((id) => !selectedTables.includes(id));
+
+  return html`
+    <div className="db-panel">
+      <div className="db-list">
+        ${databases.length === 0
+          ? html`<p className="empty-hint">No databases yet.</p>`
+          : databases.map((db) => html`
+              <div
+                key=${db.name}
+                className=${`db-item${db.name === selectedName ? ' active' : ''}`}
+                onClick=${() => setSelectedName(db.name)}
+              >
+                <span className="db-item-name">${db.name}</span>
+                <span className="db-item-meta">${Object.keys(db.tables || {}).length} tables</span>
+                <button
+                  className="btn-icon btn-del"
+                  onClick=${(event) => { event.stopPropagation(); onDeleteDatabase(db.name); }}
+                >✕</button>
+              </div>
+            `)}
+        <div className="new-module-form">
+          <input
+            value=${newDbName}
+            placeholder="database name"
+            onInput=${(event) => setNewDbName(event.target.value)}
+          />
+          <button onClick=${create}>+ Create</button>
+        </div>
+      </div>
+
+      ${selected && html`
+        <div className="db-detail">
+          <div className="db-detail-header">${selected.name}</div>
+          <div className="db-tables-row">
+            ${selectedTables.map((typeId) => html`
+              <button
+                key=${typeId}
+                className=${`db-tab${typeId === activeTable ? ' active' : ''}`}
+                onClick=${() => setActiveTable(typeId)}
+              >${typeId}</button>
+            `)}
+          </div>
+          ${availableTypeIds.length > 0 && html`
+            <div className="db-add-table">
+              <select value=${tableToAdd} onChange=${(event) => setTableToAdd(event.target.value)}>
+                <option value="">— pick data type —</option>
+                ${availableTypeIds.map((id) => html`<option key=${id} value=${id}>${id}</option>`)}
+              </select>
+              <button onClick=${addTable} disabled=${!tableToAdd}>+ Add table</button>
+            </div>
+          `}
+          ${activeTable && html`
+            <div className="db-rows">
+              ${columns.length === 0
+                ? html`<p className="empty-hint">Data type <code>${activeTable}</code> has no struct fields.</p>`
+                : html`
+                    <table className="db-rows-table">
+                      <thead>
+                        <tr>${columns.map((column) => html`<th key=${column}>${column}</th>`)}<th></th></tr>
+                      </thead>
+                      <tbody>
+                        ${(selected.tables[activeTable] || []).map((row, idx) => html`
+                          <tr key=${idx}>
+                            ${columns.map((column) => html`<td key=${column}>${row[column] === undefined ? '' : String(row[column])}</td>`)}
+                            <td>
+                              <button
+                                className="btn-icon btn-del"
+                                onClick=${() => onDeleteRow(selected.name, activeTable, idx)}
+                              >✕</button>
+                            </td>
+                          </tr>
+                        `)}
+                        <tr className="db-row-add">
+                          ${columns.map((column) => html`
+                            <td key=${column}>
+                              <input
+                                value=${rowDraft[column] ?? ''}
+                                placeholder=${column}
+                                onInput=${(event) => setRowDraft((previous) => ({ ...previous, [column]: event.target.value }))}
+                              />
+                            </td>
+                          `)}
+                          <td><button onClick=${submitRow}>+ Add</button></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  `}
+            </div>
+          `}
+        </div>
+      `}
+    </div>
+  `;
+}
+
 // --------------------------------------------------------- DiagramCanvas
 
 export function DiagramCanvas({
@@ -454,6 +655,7 @@ export function RunPanel({ module, liveInputs, onRun, lastResult, running }) {
   const inputs = liveInputs && liveInputs.length ? liveInputs : (module?.inputs ?? []);
   const [signal, setSignal] = useState(inputs[0]?.name ?? '');
   const [valueText, setValueText] = useState('');
+  const [persist, setPersist] = useState(false);
   const [error, setError] = useState(null);
 
   useEffect(() => {
@@ -478,7 +680,7 @@ export function RunPanel({ module, liveInputs, onRun, lastResult, running }) {
       setError('Pick an input signal.');
       return;
     }
-    await onRun(signal, value);
+    await onRun(signal, value, { persist });
   };
 
   if (inputs.length === 0) {
@@ -509,6 +711,10 @@ export function RunPanel({ module, liveInputs, onRun, lastResult, running }) {
           onKeyDown=${(event) => { if (event.key === 'Enter') submit(); }}
         />
         <button className="btn-run" disabled=${running} onClick=${submit}>${running ? 'Running…' : '▶ Run'}</button>
+        <label className="run-persist" title="Persist any db_create writes back to disk">
+          <input type="checkbox" checked=${persist} onChange=${(event) => setPersist(event.target.checked)} />
+          persist DB
+        </label>
       </div>
       ${error ? html`<div className="run-error">${error}</div>` : null}
       ${lastResult ? html`
@@ -541,6 +747,12 @@ export function Sidebar({
   nodeKinds,
   onSaveDt,
   onDeleteDt,
+  databases = [],
+  onCreateDatabase,
+  onDeleteDatabase,
+  onAddTable,
+  onAddRow,
+  onDeleteRow,
   currentModule,
   activeTab,
   setActiveTab,
@@ -571,6 +783,9 @@ export function Sidebar({
         <button className=${`tab${activeTab === 'modules' ? ' active' : ''}`} onClick=${() => setActiveTab('modules')}>Modules</button>
         <button className=${`tab${activeTab === 'types' ? ' active' : ''}`} onClick=${() => setActiveTab('types')}>
           Types${dataTypes.length ? html` <span className="tab-count">${dataTypes.length}</span>` : null}
+        </button>
+        <button className=${`tab${activeTab === 'databases' ? ' active' : ''}`} onClick=${() => setActiveTab('databases')}>
+          Databases${databases.length ? html` <span className="tab-count">${databases.length}</span>` : null}
         </button>
         <button className=${`tab${activeTab === 'palette' ? ' active' : ''}`} onClick=${() => setActiveTab('palette')}>Palette</button>
       </div>
@@ -615,6 +830,25 @@ export function Sidebar({
           <div className="section-header">Global Data Types</div>
           <p className="section-hint">Shared across all modules. Used to type signals and connections.</p>
           <${DataTypePanel} dataTypes=${dataTypes} primitives=${primitives} onSave=${onSaveDt} onDelete=${onDeleteDt} />
+        </div>
+      `}
+
+      ${activeTab === 'databases' && html`
+        <div className="sidebar-section">
+          <div className="section-header">Databases</div>
+          <p className="section-hint">
+            Global, named tables. Each table is one of the data types above.
+            Used by <code>db_read</code> / <code>db_create</code> nodes.
+          </p>
+          <${DatabasePanel}
+            databases=${databases}
+            dataTypes=${dataTypes}
+            onCreateDatabase=${onCreateDatabase}
+            onDeleteDatabase=${onDeleteDatabase}
+            onAddTable=${onAddTable}
+            onAddRow=${onAddRow}
+            onDeleteRow=${onDeleteRow}
+          />
         </div>
       `}
 

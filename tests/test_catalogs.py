@@ -12,6 +12,8 @@ def test_node_kinds_catalog_lists_executable_kinds_in_palette_order() -> None:
         "module_output",
         "python",
         "submodule",
+        "db_read",
+        "db_create",
     ]
 
 

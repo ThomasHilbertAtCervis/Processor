@@ -151,6 +151,8 @@ for-each, …) are layered on top of this core in later iterations.
 |  ◉     | Module Output   | Sink-only node; whatever arrives on its input becomes a module output.  |
 |  λ     | Python          | Runs a sandboxed Python script. Reads `inputs[port]`; firing an output port is `outputs[port] = value`. Supports `if`, `for`, `foreach`. |
 |  ⊞     | Sub-module      | Embeds another module; its declared signals appear as ports. Double-click to drill in. |
+|  ▤     | DB Read         | Runs a `SELECT * FROM <table> [WHERE …]` against a named global database. Each `:placeholder` in the query becomes one input port. Output port `rows` fires the matched rows. |
+|  ▥     | DB Create       | Runs an `INSERT INTO <table> (cols) VALUES (vals)` against a named global database. Each `:placeholder` becomes one input port. Output port `created` fires the inserted row. |
 
 > Historical note: an earlier iteration used a control-flow palette of 8
 > kinds (Start, Event Trigger, Condition, For Each, Sub-module, Emit
@@ -199,6 +201,32 @@ The user can write Python test scripts (`/api/tests/run`) that:
   single-input contract as the UI/API/MCP),
 - mock interface dependencies (`mocks={"database": …}`),
 - assert against the resulting state (`assert_equal(...)`).
+
+### 2.8 Databases
+
+Databases are **global** named containers — siblings of *Data types* in
+the sidebar. Each database holds one or more **tables**; a table is
+identified by a `data_type_id`, and the data type's `struct` fields *are*
+the table's columns. There is no separate table-schema entity.
+
+- Storage: `storage/databases/{name}.json` — one JSON file per database,
+  shaped as `{name, tables: {type_id: [row, ...]}}`.
+- The Sidebar **Databases** tab lists every database, lets the user
+  create new ones, add tables (each picked from the existing data
+  types), and edit rows in-place.
+- `db_read` and `db_create` nodes refer to a database by `database_name`
+  and carry a `query` static parameter (see §2.5). The query language
+  is a deliberately tiny SQL-ish DSL:
+    - `SELECT * FROM <table> [WHERE col op val [AND col op val …]]`
+    - `INSERT INTO <table> (col, …) VALUES (val, …)`
+    - `op ∈ {= != < <= > >=}`; values are either literals or
+      `:placeholder` references.
+- Run semantics: when a module is run, every database is **snapshotted**
+  into a mutable in-memory dict before execution. `db_create` mutates
+  the snapshot in place. The run endpoint accepts an optional
+  `persist: bool = false`; when `true`, the snapshot is written back to
+  disk after the run, otherwise it is discarded — so runs are safely
+  repeatable by default.
 
 ---
 
@@ -273,6 +301,7 @@ tracks status. Status uses ✅ done, 🚧 in progress, 📋 backlog,
 | F-020 | Owner direction, May 2026             | **Data-flow execution model.** Data flows along wires; there is no direct variable access. A node only ever receives values on its inputs and fires values on its outputs. Firing an output may suspend the node until a paired response arrives (request/response). Single path of execution, generator-style ergonomics for Python nodes. | ✅ — storage format bumped to v2, v1 files rejected on load; simulator rebuilt around frames + request/response handshake; demo `scripts/build_half_or_double.py` rewritten as `module_input → python (if/else) → module_output`. |
 | F-021 | Owner direction, May 2026             | **Single-input execution contract.** *"Execution of any node or flow is always initiated through a single input. So for execution, we need to first select an input, then specify its value (based on its data type) and then start the execution. This should be possible through UI, Api and MCP."* | ✅ — `Simulator.run(module, *, input_signal, input_value)`; `POST /api/modules/{id}/run` takes `{input_signal, input_value}`; MCP `run_module(module_id, input_signal, input_value)`; UI Run panel above the canvas lets the user pick an input signal, enter a JSON value, and execute. |
 | F-022 | Owner direction, May 2026             | *"there is currently a weird duplication: inputs/outputs are created through the palette AND through the model tab. It should only be possible through the palette by dragging the nodes onto the workflow. Name and data type should be parameters on the node."* | ✅ — `Module.inputs`/`outputs` are now **derived** from `module_input`/`module_output` nodes on the canvas (`models._derive_signals_from_nodes`, applied in both `from_dict` and `to_dict`). The Sidebar "Signals" tab is gone; the PropertiesPanel exposes a *Signal name* + *Data type* editor on those nodes, and palette drops seed a default port so the node is immediately connectable. |
+| F-023 | Owner direction, May 2026             | *"Now we need more node types. Add nodes for CRUD on a database. Databases and their tables should be global objects. Tables are basically data types and should be treated as one and the same. The CRUD nodes should simply have inputs and outputs just like other nodes. They should also have static parameters for `database_name` and `query`."* (v1 scope: read + create; `persist=false` by default; SQL-ish query syntax.) | ✅ — new `Database` global catalog under `storage/databases/`; tables are keyed by `data_type_id` (no separate schema entity). Two new node kinds: `db_read` (SELECT) and `db_create` (INSERT). Tiny SQL-ish parser in `processor_playground/sql.py` supports `SELECT * FROM t [WHERE col op val [AND ...]]` and `INSERT INTO t (cols) VALUES (vals)`; each `:placeholder` becomes one input port. `POST /api/modules/{id}/run` now snapshots every database into a mutable dict the simulator reads/writes; `persist=true` opts in to writing the snapshot back. New Sidebar **Databases** tab lets users create databases, add typed tables, and edit rows in-place. |
 
 ### Cross-cutting / always-on requirements
 

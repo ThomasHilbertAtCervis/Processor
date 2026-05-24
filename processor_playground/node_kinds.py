@@ -46,6 +46,8 @@ _NODE_KINDS: tuple[NodeKind, ...] = (
     NodeKind("module_output", "◉ Module Output", "Output"),
     NodeKind("python",        "λ Python",        "Python"),
     NodeKind("submodule",     "⊞ Sub-module",    "Sub-module"),
+    NodeKind("db_read",       "▤ DB Read",       "DB Read"),
+    NodeKind("db_create",     "▥ DB Create",     "DB Create"),
 )
 
 

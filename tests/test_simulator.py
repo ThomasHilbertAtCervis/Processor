@@ -381,3 +381,154 @@ class TestErrorPaths:
         )
         with pytest.raises(SimulatorError, match="source-only node"):
             Simulator().run(module, input_signal="a", input_value=1)
+
+
+# --------------------------------------------------------------- DB nodes
+
+def _db_read(node_id: str, *, database: str, query: str, inputs: list[Port], output_port: str = "rows") -> Node:
+    return Node(
+        id=node_id, type="db_read",
+        inputs=inputs,
+        outputs=[Port(name=output_port)],
+        data={"database_name": database, "query": query},
+    )
+
+
+def _db_create(node_id: str, *, database: str, query: str, inputs: list[Port], output_port: str = "created") -> Node:
+    return Node(
+        id=node_id, type="db_create",
+        inputs=inputs,
+        outputs=[Port(name=output_port)],
+        data={"database_name": database, "query": query},
+    )
+
+
+class TestDatabaseNodes:
+    def test_db_read_selects_matching_rows_and_fires_them(self) -> None:
+        module = _mod(
+            inputs=[Signal("trigger")],
+            outputs=[Signal("found")],
+            nodes=[
+                _input("i", "trigger"),
+                _db_read(
+                    "r",
+                    database="shop",
+                    query="SELECT * FROM customer WHERE region = :region",
+                    inputs=[Port("region")],
+                ),
+                _output("o", "found"),
+            ],
+            edges=[
+                _wire("e1", "i", "value", "r", "region"),
+                _wire("e2", "r", "rows", "o", "value"),
+            ],
+        )
+        dbs = {
+            "shop": {
+                "customer": [
+                    {"id": 1, "region": "EU"},
+                    {"id": 2, "region": "US"},
+                    {"id": 3, "region": "EU"},
+                ]
+            }
+        }
+        result = Simulator().run(module, input_signal="trigger", input_value="EU", databases=dbs)
+        assert result["outputs"]["found"] == [[
+            {"id": 1, "region": "EU"},
+            {"id": 3, "region": "EU"},
+        ]]
+
+    def test_db_create_appends_row_and_mutates_snapshot(self) -> None:
+        dbs = {"shop": {"customer": []}}
+        module = _mod(
+            inputs=[Signal("name")],
+            outputs=[Signal("inserted")],
+            nodes=[
+                _input("i", "name", "string"),
+                _db_create(
+                    "c",
+                    database="shop",
+                    query="INSERT INTO customer (name) VALUES (:name)",
+                    inputs=[Port("name")],
+                ),
+                _output("o", "inserted"),
+            ],
+            edges=[
+                _wire("e1", "i", "value", "c", "name"),
+                _wire("e2", "c", "created", "o", "value"),
+            ],
+        )
+        result = Simulator().run(module, input_signal="name", input_value="Alice", databases=dbs)
+        assert result["outputs"]["inserted"] == [{"name": "Alice"}]
+        assert dbs["shop"]["customer"] == [{"name": "Alice"}]
+
+    def test_db_create_buffers_until_all_inputs_arrive(self) -> None:
+        # Two placeholders -> two input ports. Fan one module_input out
+        # through a python node that fires both ports with different
+        # values, then assert the insert fires exactly once.
+        module = _mod(
+            inputs=[Signal("seed")],
+            outputs=[Signal("done")],
+            nodes=[
+                _input("i", "seed", "string"),
+                _python(
+                    "split",
+                    "outputs['n'] = inputs['v']\noutputs['a'] = 42",
+                    inputs=[Port("v")],
+                    outputs=[Port("n"), Port("a")],
+                ),
+                _db_create(
+                    "c",
+                    database="shop",
+                    query="INSERT INTO customer (name, age) VALUES (:name, :age)",
+                    inputs=[Port("name"), Port("age")],
+                ),
+                _output("o", "done"),
+            ],
+            edges=[
+                _wire("e0", "i", "value", "split", "v"),
+                _wire("e1", "split", "n", "c", "name"),
+                _wire("e2", "split", "a", "c", "age"),
+                _wire("e3", "c", "created", "o", "value"),
+            ],
+        )
+        dbs = {"shop": {"customer": []}}
+        result = Simulator().run(module, input_signal="seed", input_value="Bob", databases=dbs)
+        assert result["outputs"]["done"] == [{"name": "Bob", "age": 42}]
+        assert dbs["shop"]["customer"] == [{"name": "Bob", "age": 42}]
+
+    def test_db_read_with_unknown_database_raises(self) -> None:
+        module = _mod(
+            inputs=[Signal("t")],
+            nodes=[
+                _input("i", "t"),
+                _db_read("r", database="missing", query="SELECT * FROM x", inputs=[Port("p")]),
+            ],
+            edges=[_wire("e", "i", "value", "r", "p")],
+        )
+        with pytest.raises(SimulatorError, match="unknown database"):
+            Simulator().run(module, input_signal="t", input_value=1, databases={})
+
+    def test_db_create_rejects_select_statement(self) -> None:
+        module = _mod(
+            inputs=[Signal("t")],
+            nodes=[
+                _input("i", "t"),
+                _db_create("c", database="shop", query="SELECT * FROM x", inputs=[Port("p")]),
+            ],
+            edges=[_wire("e", "i", "value", "c", "p")],
+        )
+        with pytest.raises(SimulatorError, match="INSERT"):
+            Simulator().run(module, input_signal="t", input_value=1, databases={"shop": {}})
+
+    def test_db_read_rejects_insert_statement(self) -> None:
+        module = _mod(
+            inputs=[Signal("t")],
+            nodes=[
+                _input("i", "t"),
+                _db_read("r", database="shop", query="INSERT INTO x (a) VALUES (:p)", inputs=[Port("p")]),
+            ],
+            edges=[_wire("e", "i", "value", "r", "p")],
+        )
+        with pytest.raises(SimulatorError, match="SELECT"):
+            Simulator().run(module, input_signal="t", input_value=1, databases={"shop": {}})

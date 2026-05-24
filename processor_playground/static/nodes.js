@@ -209,11 +209,58 @@ const PythonNode = ({ data, selected }) => {
   `;
 };
 
+const DbNode = ({ data, selected, type }) => {
+  const ports = data._ports || {};
+  const inputs = ports.inputs || [];
+  const outputs = ports.outputs || [];
+  const rowCount = Math.max(inputs.length, outputs.length, 1);
+  const isRead = type === 'db_read';
+  return html`
+    <div className=${`node-db node-${type}${selected ? ' selected' : ''}`}>
+      <div className="node-db-header">
+        <span className="node-db-icon">${isRead ? '▤' : '▥'}</span>
+        <span className="node-db-name">${data.label || (isRead ? 'DB Read' : 'DB Create')}</span>
+      </div>
+      ${data.database_name ? html`<div className="node-db-db">${data.database_name}${data.query ? html` · ${data.query.slice(0, 32)}${data.query.length > 32 ? '…' : ''}` : null}</div>` : null}
+      <div className="node-python-body" style=${{ minHeight: `${rowCount * 24}px` }}>
+        <div className="node-submodule-col node-submodule-col-in">
+          ${inputs.map((port) => html`
+            <div key=${`in-${port.name}`} className="node-port node-port-in">
+              <${Handle}
+                type="target"
+                position=${Position.Left}
+                id=${port.name}
+                className="node-port-handle"
+              />
+              <span className="node-port-label">${port.name}</span>
+            </div>
+          `)}
+        </div>
+        <div className="node-submodule-col node-submodule-col-out">
+          ${outputs.map((port) => html`
+            <div key=${`out-${port.name}`} className="node-port node-port-out">
+              <span className="node-port-label">${port.name}</span>
+              <${Handle}
+                type="source"
+                position=${Position.Right}
+                id=${port.name}
+                className="node-port-handle"
+              />
+            </div>
+          `)}
+        </div>
+      </div>
+    </div>
+  `;
+};
+
 export const NODE_TYPES = {
   module_input: ModuleInputNode,
   module_output: ModuleOutputNode,
   python: PythonNode,
   submodule: SubmoduleNode,
+  db_read: DbNode,
+  db_create: DbNode,
   // Legacy v1 visual kinds — still mapped so historical screenshots/tests
   // don't crash if they sneak into a v2 module.
   start: StartNode,

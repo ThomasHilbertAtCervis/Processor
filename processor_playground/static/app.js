@@ -79,12 +79,60 @@ function makeNodeDefaults(type, label) {
       },
     };
   }
+  if (type === 'db_read' || type === 'db_create') {
+    const defaultQuery = type === 'db_read'
+      ? 'SELECT * FROM table_name WHERE column = :param'
+      : 'INSERT INTO table_name (column) VALUES (:param)';
+    const { inputs, outputs } = deriveDbPorts(type, defaultQuery);
+    return {
+      inputs,
+      outputs,
+      data: {
+        label,
+        database_name: '',
+        query: defaultQuery,
+        _ports: { inputs, outputs },
+      },
+    };
+  }
   // submodule and any future kind: empty until configured.
   return {
     inputs: [],
     outputs: [],
     data: { label, _ports: { inputs: [], outputs: [] } },
   };
+}
+
+// Extract :placeholder names from a SQL-ish query string, in order, de-duped.
+// Mirrors processor_playground.sql.placeholder_names — kept tiny so the UI
+// can derive db node input ports as the user edits the query.
+export function extractPlaceholders(query) {
+  if (!query) return [];
+  const matches = String(query).match(/:[A-Za-z_][A-Za-z_0-9]*/g) || [];
+  const seen = new Set();
+  const out = [];
+  for (const raw of matches) {
+    const name = raw.slice(1);
+    if (seen.has(name)) continue;
+    seen.add(name);
+    out.push(name);
+  }
+  return out;
+}
+
+// Rebuild a db node's input ports from the placeholders in its query, and
+// its single output port from its kind. Returns { inputs, outputs }.
+function deriveDbPorts(nodeType, query) {
+  const placeholders = extractPlaceholders(query);
+  const inputs = placeholders.length
+    ? placeholders.map((name) => ({ name, type_ref: 'any', kind: 'data' }))
+    // No placeholders -> a single "trigger" input so the node is reachable
+    // from the graph at all (queries with all-literal values still need a
+    // wire to know when to fire).
+    : [{ name: 'trigger', type_ref: 'any', kind: 'data' }];
+  const outputName = nodeType === 'db_read' ? 'rows' : 'created';
+  const outputs = [{ name: outputName, type_ref: 'any', kind: 'data' }];
+  return { inputs, outputs };
 }
 
 // Module interface nodes whose signal_name was never set (legacy data, or the
@@ -124,6 +172,7 @@ function backfillInterfaceSignalNames(nodes) {
 function App() {
   const [modules, setModules] = useState([]);
   const [dataTypes, setDataTypes] = useState([]);
+  const [databases, setDatabases] = useState([]);
   const [primitives, setPrimitives] = useState([]);
   const [nodeKinds, setNodeKinds] = useState([]);
   const [currentModuleId, setCurrentModuleId] = useState(null);
@@ -193,6 +242,12 @@ function App() {
     return typesPayload;
   }, []);
 
+  const refreshDatabases = useCallback(async () => {
+    const payload = await apiGet('/api/databases');
+    setDatabases(payload);
+    return payload;
+  }, []);
+
   const loadModule = useCallback(async (moduleId) => {
     const modulePayload = await apiGet(`/api/modules/${moduleId}`);
     setCurrentModuleId(moduleId);
@@ -207,6 +262,7 @@ function App() {
     Promise.all([
       refreshModules(),
       refreshDataTypes(),
+      refreshDatabases(),
       apiGet('/api/data-types/primitives').then(setPrimitives),
       apiGet('/api/node-kinds').then(setNodeKinds),
     ])
@@ -216,7 +272,7 @@ function App() {
         }
       })
       .catch((error) => showStatus(`Failed to load: ${error.message}`, true));
-  }, [loadModule, refreshDataTypes, refreshModules, showStatus]);
+  }, [loadModule, refreshDataTypes, refreshDatabases, refreshModules, showStatus]);
 
   const saveCurrentDiagram = useCallback(async () => {
     if (!currentModuleId || !currentModule) {
@@ -327,6 +383,16 @@ function App() {
       if (node.type === 'module_output' && newData.signal_type !== undefined) {
         const port = (inputs && inputs[0]) || { name: 'value', kind: 'data' };
         inputs = [{ ...port, type_ref: newData.signal_type || 'any' }];
+      }
+      // db_read / db_create derive their inputs from the :placeholders in
+      // their SQL query. Whenever the query (or kind) changes we rebuild
+      // the port list so the visible handles always match what the
+      // simulator will demand at run time.
+      if ((node.type === 'db_read' || node.type === 'db_create')
+          && (newData.query !== undefined || node.inputs === undefined)) {
+        const derived = deriveDbPorts(node.type, mergedData.query || '');
+        inputs = derived.inputs;
+        outputs = derived.outputs;
       }
       // Keep the view-only ports mirror in sync so the canvas renders the
       // updated handle without a reload.
@@ -479,7 +545,7 @@ function App() {
     }
   }, [showStatus]);
 
-  const runModule = useCallback(async (inputSignal, inputValue) => {
+  const runModule = useCallback(async (inputSignal, inputValue, opts = {}) => {
     if (!currentModuleId) {
       return;
     }
@@ -488,20 +554,83 @@ function App() {
       const result = await apiPost(`/api/modules/${currentModuleId}/run`, {
         input_signal: inputSignal,
         input_value: inputValue,
+        persist: Boolean(opts.persist),
       });
       setRunResult(result);
       showStatus(`Run ${result.status}`);
+      if (opts.persist) {
+        // Pick up any db_create writes that hit disk.
+        refreshDatabases().catch(() => {});
+      }
     } catch (error) {
       setRunResult({ status: 'error', outputs: {}, error: error.message });
       showStatus(`Run failed: ${error.message}`, true);
     } finally {
       setRunning(false);
     }
-  }, [currentModuleId, showStatus]);
+  }, [currentModuleId, refreshDatabases, showStatus]);
 
   useEffect(() => {
     setRunResult(null);
   }, [currentModuleId]);
+
+  // ---------------------------------------------------- database callbacks
+
+  const onCreateDatabase = useCallback(async (name) => {
+    try {
+      await apiPost('/api/databases', { name, tables: {} });
+      await refreshDatabases();
+      showStatus('Database created');
+    } catch (error) {
+      showStatus(`Create failed: ${error.message}`, true);
+    }
+  }, [refreshDatabases, showStatus]);
+
+  const onDeleteDatabase = useCallback(async (name) => {
+    if (!window.confirm(`Delete database "${name}"?`)) return;
+    try {
+      await apiDelete(`/api/databases/${name}`);
+      await refreshDatabases();
+      showStatus('Deleted');
+    } catch (error) {
+      showStatus(`Delete failed: ${error.message}`, true);
+    }
+  }, [refreshDatabases, showStatus]);
+
+  const onAddTable = useCallback(async (dbName, typeId) => {
+    const db = databases.find((d) => d.name === dbName);
+    if (!db) return;
+    const nextTables = { ...(db.tables || {}) };
+    if (nextTables[typeId]) {
+      showStatus('Table already exists');
+      return;
+    }
+    nextTables[typeId] = [];
+    try {
+      await apiPut(`/api/databases/${dbName}`, { name: dbName, tables: nextTables });
+      await refreshDatabases();
+    } catch (error) {
+      showStatus(`Add table failed: ${error.message}`, true);
+    }
+  }, [databases, refreshDatabases, showStatus]);
+
+  const onAddRow = useCallback(async (dbName, typeId, row) => {
+    try {
+      await apiPost(`/api/databases/${dbName}/tables/${typeId}/rows`, { row });
+      await refreshDatabases();
+    } catch (error) {
+      showStatus(`Add row failed: ${error.message}`, true);
+    }
+  }, [refreshDatabases, showStatus]);
+
+  const onDeleteRow = useCallback(async (dbName, typeId, index) => {
+    try {
+      await apiDelete(`/api/databases/${dbName}/tables/${typeId}/rows/${index}`);
+      await refreshDatabases();
+    } catch (error) {
+      showStatus(`Delete row failed: ${error.message}`, true);
+    }
+  }, [refreshDatabases, showStatus]);
 
   return html`
     <div id="app">
@@ -516,6 +645,12 @@ function App() {
         nodeKinds=${nodeKinds}
         onSaveDt=${onSaveDt}
         onDeleteDt=${onDeleteDt}
+        databases=${databases}
+        onCreateDatabase=${onCreateDatabase}
+        onDeleteDatabase=${onDeleteDatabase}
+        onAddTable=${onAddTable}
+        onAddRow=${onAddRow}
+        onDeleteRow=${onDeleteRow}
         currentModule=${currentModule}
         activeTab=${activeTab}
         setActiveTab=${setActiveTab}
@@ -565,6 +700,7 @@ function App() {
         dataTypes=${dataTypes}
         primitives=${primitives}
         modules=${modules}
+        databases=${databases}
       />
     </div>
   `;

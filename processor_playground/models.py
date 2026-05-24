@@ -344,3 +344,40 @@ class Module:
             "edges": [e.to_dict() for e in self.edges],
             "submodules": [m.to_dict() for m in self.submodules],
         }
+
+
+# ------------------------------------------------------------------- Database
+
+@dataclass
+class Database:
+    """A globally-named container of tables.
+
+    A *table* is identified by a ``data_type_id`` — the existing ``DataType``
+    fully describes its row shape (column names + types). There is no
+    separate table-schema entity. A ``Database`` therefore stores just the
+    rows for each (typed) table it contains.
+
+    Validation that table keys reference real data types and that rows
+    satisfy them lives in the API/repository layer, not on the model.
+    """
+
+    name: str
+    tables: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+
+    @staticmethod
+    def from_dict(payload: dict[str, Any]) -> "Database":
+        raw_tables = payload.get("tables", {}) or {}
+        tables: dict[str, list[dict[str, Any]]] = {}
+        for type_id, rows in raw_tables.items():
+            tables[type_id] = [dict(row) for row in (rows or [])]
+        return Database(name=payload["name"], tables=tables)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "tables": {
+                type_id: [dict(row) for row in rows]
+                for type_id, rows in self.tables.items()
+            },
+        }
+

@@ -25,7 +25,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .data_type_repository import DataTypeRepository
-from .models import DataType, Module
+from .database_repository import DatabaseRepository
+from .models import Database, DataType, Module
 from .node_kinds import list_node_kinds
 from .primitives import list_primitive_type_ids
 from .repository import ModuleRepository
@@ -38,6 +39,7 @@ from .testing import ScriptTestRunner
 BASE_DIR = Path(__file__).resolve().parent.parent
 STORAGE_DIR = BASE_DIR / "storage" / "modules"
 DATA_TYPES_DIR = BASE_DIR / "storage" / "data-types"
+DATABASES_DIR = BASE_DIR / "storage" / "databases"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
@@ -47,6 +49,7 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 # their own and inject via app.dependency_overrides.
 repo = ModuleRepository(STORAGE_DIR)
 data_type_repo = DataTypeRepository(DATA_TYPES_DIR)
+database_repo = DatabaseRepository(DATABASES_DIR)
 simulator = Simulator()
 script_runner = ScriptTestRunner(repo, simulator)
 
@@ -57,6 +60,10 @@ def get_module_repository() -> ModuleRepository:
 
 def get_data_type_repository() -> DataTypeRepository:
     return data_type_repo
+
+
+def get_database_repository() -> DatabaseRepository:
+    return database_repo
 
 
 def get_simulator() -> Simulator:
@@ -93,10 +100,24 @@ class RunPayload(BaseModel):
     Execution is always initiated through a *single* input signal — the
     client picks which input to wake and supplies one value of the
     matching data type.
+
+    ``persist`` controls whether mutations performed by ``db_create``
+    nodes are written back to disk. Defaults to ``False`` so that runs
+    are safely repeatable.
     """
 
     input_signal: str = Field(min_length=1)
     input_value: Any = None
+    persist: bool = False
+
+
+class DatabasePayload(BaseModel):
+    name: str = Field(min_length=1)
+    tables: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
+
+
+class RowPayload(BaseModel):
+    row: dict[str, Any]
 
 
 class ScriptPayload(BaseModel):
@@ -183,6 +204,7 @@ def run_module(
     module_id: str,
     payload: RunPayload,
     modules: ModuleRepository = Depends(get_module_repository),
+    databases: DatabaseRepository = Depends(get_database_repository),
     sim: Simulator = Depends(get_simulator),
 ) -> dict[str, Any]:
     module = modules.get(module_id)
@@ -198,11 +220,23 @@ def run_module(
         _embed_referenced_submodules(module, modules)
     except KeyError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return sim.run(
+    # Snapshot every saved database into a mutable in-memory dict that the
+    # simulator's db_* activators read from and write to. We persist back
+    # to disk only if the caller opts in.
+    snapshot: dict[str, dict[str, list[dict[str, Any]]]] = {
+        db.name: {table: [dict(row) for row in rows] for table, rows in db.tables.items()}
+        for db in databases.list()
+    }
+    result = sim.run(
         module,
         input_signal=payload.input_signal,
         input_value=payload.input_value,
+        databases=snapshot,
     )
+    if payload.persist:
+        for name, tables in snapshot.items():
+            databases.save(Database(name=name, tables=tables))
+    return result
 
 
 def _embed_referenced_submodules(
@@ -289,6 +323,130 @@ def run_script_test(
     return runner.run(payload.script)
 
 
+# ---------------------------------------------------------------- Databases
+
+def _validate_db_tables(
+    tables: dict[str, list[dict[str, Any]]],
+    data_types: DataTypeRepository,
+) -> None:
+    """Every key in ``tables`` must reference an existing data type."""
+    for type_id in tables:
+        if not data_types.get(type_id):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Table '{type_id}' does not reference an existing data type",
+            )
+
+
+@app.get("/api/databases")
+def list_databases(
+    databases: DatabaseRepository = Depends(get_database_repository),
+) -> list[dict[str, Any]]:
+    return [db.to_dict() for db in databases.list()]
+
+
+@app.get("/api/databases/{name}")
+def get_database(
+    name: str,
+    databases: DatabaseRepository = Depends(get_database_repository),
+) -> dict[str, Any]:
+    db = databases.get(name)
+    if not db:
+        raise HTTPException(status_code=404, detail="Database not found")
+    return db.to_dict()
+
+
+@app.post("/api/databases", status_code=201)
+def create_database(
+    payload: DatabasePayload,
+    databases: DatabaseRepository = Depends(get_database_repository),
+    data_types: DataTypeRepository = Depends(get_data_type_repository),
+) -> dict[str, Any]:
+    if databases.get(payload.name):
+        raise HTTPException(status_code=409, detail="Database already exists")
+    _validate_db_tables(payload.tables, data_types)
+    db = Database(name=payload.name, tables=payload.tables)
+    databases.save(db)
+    return db.to_dict()
+
+
+@app.put("/api/databases/{name}")
+def upsert_database(
+    name: str,
+    payload: DatabasePayload,
+    databases: DatabaseRepository = Depends(get_database_repository),
+    data_types: DataTypeRepository = Depends(get_data_type_repository),
+) -> dict[str, Any]:
+    if name != payload.name:
+        raise HTTPException(status_code=400, detail="Path name and payload name must match")
+    _validate_db_tables(payload.tables, data_types)
+    db = Database(name=payload.name, tables=payload.tables)
+    databases.save(db)
+    return db.to_dict()
+
+
+@app.delete("/api/databases/{name}", status_code=204)
+def delete_database(
+    name: str,
+    databases: DatabaseRepository = Depends(get_database_repository),
+) -> Response:
+    if not databases.delete(name):
+        raise HTTPException(status_code=404, detail="Database not found")
+    return Response(status_code=204)
+
+
+@app.get("/api/databases/{name}/tables/{type_id}/rows")
+def list_rows(
+    name: str,
+    type_id: str,
+    databases: DatabaseRepository = Depends(get_database_repository),
+) -> list[dict[str, Any]]:
+    db = databases.get(name)
+    if not db:
+        raise HTTPException(status_code=404, detail="Database not found")
+    return list(db.tables.get(type_id, []))
+
+
+@app.post("/api/databases/{name}/tables/{type_id}/rows", status_code=201)
+def append_row(
+    name: str,
+    type_id: str,
+    payload: RowPayload,
+    databases: DatabaseRepository = Depends(get_database_repository),
+    data_types: DataTypeRepository = Depends(get_data_type_repository),
+) -> dict[str, Any]:
+    db = databases.get(name)
+    if not db:
+        raise HTTPException(status_code=404, detail="Database not found")
+    if not data_types.get(type_id):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Table '{type_id}' does not reference an existing data type",
+        )
+    rows = db.tables.setdefault(type_id, [])
+    rows.append(dict(payload.row))
+    databases.save(db)
+    return dict(payload.row)
+
+
+@app.delete("/api/databases/{name}/tables/{type_id}/rows/{index}", status_code=204)
+def delete_row(
+    name: str,
+    type_id: str,
+    index: int,
+    databases: DatabaseRepository = Depends(get_database_repository),
+) -> Response:
+    db = databases.get(name)
+    if not db:
+        raise HTTPException(status_code=404, detail="Database not found")
+    rows = db.tables.get(type_id, [])
+    if index < 0 or index >= len(rows):
+        raise HTTPException(status_code=404, detail="Row not found")
+    rows.pop(index)
+    databases.save(db)
+    return Response(status_code=204)
+
+
 @app.get("/api/templates/default-module")
 def default_module_template() -> dict[str, Any]:
     return default_module().to_dict()
@@ -311,6 +469,7 @@ def health() -> dict[str, str]:
         "status": "ok",
         "storage": str(STORAGE_DIR),
         "data_types": str(DATA_TYPES_DIR),
+        "databases": str(DATABASES_DIR),
     }
 
 

@@ -762,3 +762,89 @@ button {
   border-radius: 0 4px 4px 0;
 }
 .node-module-io-label { white-space: nowrap; }
+
+/* ---------------------------------------------------------- DB nodes */
+
+.node-db {
+  background: #fff;
+  border: 1.5px solid #f59e0b;
+  border-radius: 6px;
+  min-width: 200px;
+  font-size: 12px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+}
+.node-db-header {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  background: #fef3c7;
+  padding: 6px 8px;
+  border-bottom: 1px solid #fcd34d;
+  border-radius: 6px 6px 0 0;
+}
+.node-db-icon { font-weight: 700; }
+.node-db-name { font-weight: 700; color: #92400e; }
+.node-db-db {
+  padding: 4px 8px;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: #78350f;
+  border-bottom: 1px dashed #fde68a;
+}
+
+.palette-db_read, .palette-db_create {
+  background: #fef3c7;
+  color: #78350f;
+}
+
+/* ---------------------------------------------------- DatabasePanel */
+
+.db-panel { display: flex; flex-direction: column; gap: 12px; }
+.db-list { display: flex; flex-direction: column; gap: 4px; }
+.db-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  cursor: pointer;
+  background: #fff;
+}
+.db-item:hover { background: #f9fafb; }
+.db-item.active { background: #eff6ff; border-color: #3b82f6; }
+.db-item-name { font-weight: 600; flex: 1; }
+.db-item-meta { font-size: 11px; color: #6b7280; }
+
+.db-detail { border-top: 1px solid #e5e7eb; padding-top: 8px; }
+.db-detail-header { font-weight: 700; margin-bottom: 6px; }
+.db-tables-row { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+.db-tab {
+  padding: 3px 8px;
+  border: 1px solid #d1d5db;
+  background: #fff;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.db-tab.active { background: #f59e0b; color: #fff; border-color: #f59e0b; }
+.db-add-table { display: flex; gap: 4px; margin-bottom: 6px; }
+.db-rows { overflow-x: auto; }
+.db-rows-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12px;
+}
+.db-rows-table th, .db-rows-table td {
+  border: 1px solid #e5e7eb;
+  padding: 3px 6px;
+  text-align: left;
+}
+.db-rows-table th { background: #f3f4f6; font-weight: 600; }
+.db-row-add input { width: 100%; box-sizing: border-box; padding: 2px 4px; font-size: 12px; }
+
+.run-persist {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: #6b7280;
+}

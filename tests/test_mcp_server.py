@@ -135,7 +135,7 @@ def test_data_types_catalogs_templates_and_script_test_via_mcp(tmp_path: Path) -
 
         node_kinds = _decode_tool_result_payload(await session.call_tool("list_node_kinds"))
         assert [item["type"] for item in node_kinds] == [
-            "module_input", "module_output", "python", "submodule",
+            "module_input", "module_output", "python", "submodule", "db_read", "db_create",
         ]
 
         saved_data_type = _decode_tool_result_payload(

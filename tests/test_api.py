@@ -10,11 +10,13 @@ from fastapi.testclient import TestClient
 from processor_playground.api import (
     app,
     get_data_type_repository,
+    get_database_repository,
     get_module_repository,
     get_script_runner,
     get_simulator,
 )
 from processor_playground.data_type_repository import DataTypeRepository
+from processor_playground.database_repository import DatabaseRepository
 from processor_playground.repository import ModuleRepository
 from processor_playground.simulator import Simulator
 from processor_playground.testing import ScriptTestRunner
@@ -24,11 +26,13 @@ from processor_playground.testing import ScriptTestRunner
 def client(tmp_path: Path) -> Iterator[TestClient]:
     modules = ModuleRepository(tmp_path / "modules")
     data_types = DataTypeRepository(tmp_path / "data-types")
+    databases = DatabaseRepository(tmp_path / "databases")
     simulator = Simulator()
     runner = ScriptTestRunner(modules, simulator)
 
     app.dependency_overrides[get_module_repository] = lambda: modules
     app.dependency_overrides[get_data_type_repository] = lambda: data_types
+    app.dependency_overrides[get_database_repository] = lambda: databases
     app.dependency_overrides[get_simulator] = lambda: simulator
     app.dependency_overrides[get_script_runner] = lambda: runner
 
@@ -225,7 +229,7 @@ class TestMiscEndpoints:
     def test_node_kinds_catalog(self, client: TestClient) -> None:
         body = client.get("/api/node-kinds").json()
         types = [entry["type"] for entry in body]
-        assert types == ["module_input", "module_output", "python", "submodule"]
+        assert types == ["module_input", "module_output", "python", "submodule", "db_read", "db_create"]
         for entry in body:
             assert entry["palette_label"]
             assert entry["default_label"]
@@ -245,3 +249,209 @@ class TestMiscEndpoints:
             "/static/style.css",
         ):
             assert client.get(path).status_code == 200, path
+
+
+# ----------------------------------------------------------------- databases
+
+class TestDatabaseEndpoints:
+    def _make_type(self, client: TestClient, type_id: str) -> None:
+        client.put(
+            f"/api/data-types/{type_id}",
+            json={
+                "type_id": type_id, "name": type_id.title(), "kind": "struct",
+                "fields": [{"name": "name", "type_ref": "string"}],
+                "element_type": None,
+            },
+        )
+
+    def test_list_is_empty_initially(self, client: TestClient) -> None:
+        assert client.get("/api/databases").json() == []
+
+    def test_create_then_get(self, client: TestClient) -> None:
+        self._make_type(client, "customer")
+        resp = client.post(
+            "/api/databases",
+            json={"name": "shop", "tables": {"customer": []}},
+        )
+        assert resp.status_code == 201
+        got = client.get("/api/databases/shop").json()
+        assert got == {"name": "shop", "tables": {"customer": []}}
+
+    def test_create_rejects_table_without_data_type(self, client: TestClient) -> None:
+        resp = client.post(
+            "/api/databases",
+            json={"name": "shop", "tables": {"ghost": []}},
+        )
+        assert resp.status_code == 400
+        assert "ghost" in resp.json()["detail"]
+
+    def test_create_duplicate_returns_409(self, client: TestClient) -> None:
+        client.post("/api/databases", json={"name": "shop", "tables": {}})
+        resp = client.post("/api/databases", json={"name": "shop", "tables": {}})
+        assert resp.status_code == 409
+
+    def test_put_upserts(self, client: TestClient) -> None:
+        self._make_type(client, "customer")
+        client.post("/api/databases", json={"name": "shop", "tables": {}})
+        resp = client.put(
+            "/api/databases/shop",
+            json={"name": "shop", "tables": {"customer": [{"name": "A"}]}},
+        )
+        assert resp.status_code == 200
+        assert client.get("/api/databases/shop").json()["tables"]["customer"] == [{"name": "A"}]
+
+    def test_delete(self, client: TestClient) -> None:
+        client.post("/api/databases", json={"name": "shop", "tables": {}})
+        assert client.delete("/api/databases/shop").status_code == 204
+        assert client.get("/api/databases/shop").status_code == 404
+
+    def test_rows_list_post_delete(self, client: TestClient) -> None:
+        self._make_type(client, "customer")
+        client.post("/api/databases", json={"name": "shop", "tables": {"customer": []}})
+        assert client.get("/api/databases/shop/tables/customer/rows").json() == []
+        client.post(
+            "/api/databases/shop/tables/customer/rows",
+            json={"row": {"name": "Alice"}},
+        )
+        client.post(
+            "/api/databases/shop/tables/customer/rows",
+            json={"row": {"name": "Bob"}},
+        )
+        rows = client.get("/api/databases/shop/tables/customer/rows").json()
+        assert rows == [{"name": "Alice"}, {"name": "Bob"}]
+        assert client.delete("/api/databases/shop/tables/customer/rows/0").status_code == 204
+        assert client.get("/api/databases/shop/tables/customer/rows").json() == [{"name": "Bob"}]
+
+    def test_rows_post_rejects_unknown_data_type(self, client: TestClient) -> None:
+        client.post("/api/databases", json={"name": "shop", "tables": {}})
+        resp = client.post(
+            "/api/databases/shop/tables/ghost/rows",
+            json={"row": {"x": 1}},
+        )
+        assert resp.status_code == 400
+
+
+class TestRunWithDatabases:
+    def _db_read_module(self, module_id: str = "rd") -> dict:
+        return {
+            "module_id": module_id, "name": module_id.title(),
+            "inputs": [{"name": "trigger", "type_ref": "string"}],
+            "outputs": [{"name": "rows", "type_ref": "any"}],
+            "nodes": [
+                {
+                    "id": "i", "type": "module_input",
+                    "inputs": [], "outputs": [{"name": "v", "type_ref": "string"}],
+                    "data": {"signal_name": "trigger"},
+                },
+                {
+                    "id": "r", "type": "db_read",
+                    "inputs": [{"name": "region", "type_ref": "string"}],
+                    "outputs": [{"name": "rows", "type_ref": "any"}],
+                    "data": {
+                        "database_name": "shop",
+                        "query": "SELECT * FROM customer WHERE region = :region",
+                    },
+                },
+                {
+                    "id": "o", "type": "module_output",
+                    "inputs": [{"name": "v", "type_ref": "any"}], "outputs": [],
+                    "data": {"signal_name": "rows"},
+                },
+            ],
+            "edges": [
+                {"id": "e1", "source": "i", "source_handle": "v",
+                 "target": "r", "target_handle": "region"},
+                {"id": "e2", "source": "r", "source_handle": "rows",
+                 "target": "o", "target_handle": "v"},
+            ],
+            "submodules": [],
+        }
+
+    def _db_create_module(self, module_id: str = "wr") -> dict:
+        return {
+            "module_id": module_id, "name": module_id.title(),
+            "inputs": [{"name": "name", "type_ref": "string"}],
+            "outputs": [{"name": "inserted", "type_ref": "any"}],
+            "nodes": [
+                {
+                    "id": "i", "type": "module_input",
+                    "inputs": [], "outputs": [{"name": "v", "type_ref": "string"}],
+                    "data": {"signal_name": "name"},
+                },
+                {
+                    "id": "c", "type": "db_create",
+                    "inputs": [{"name": "name", "type_ref": "string"}],
+                    "outputs": [{"name": "created", "type_ref": "any"}],
+                    "data": {
+                        "database_name": "shop",
+                        "query": "INSERT INTO customer (name) VALUES (:name)",
+                    },
+                },
+                {
+                    "id": "o", "type": "module_output",
+                    "inputs": [{"name": "v", "type_ref": "any"}], "outputs": [],
+                    "data": {"signal_name": "inserted"},
+                },
+            ],
+            "edges": [
+                {"id": "e1", "source": "i", "source_handle": "v",
+                 "target": "c", "target_handle": "name"},
+                {"id": "e2", "source": "c", "source_handle": "created",
+                 "target": "o", "target_handle": "v"},
+            ],
+            "submodules": [],
+        }
+
+    def _seed(self, client: TestClient) -> None:
+        client.put(
+            "/api/data-types/customer",
+            json={"type_id": "customer", "name": "Customer", "kind": "struct",
+                  "fields": [{"name": "name", "type_ref": "string"}],
+                  "element_type": None},
+        )
+        client.post(
+            "/api/databases",
+            json={"name": "shop", "tables": {"customer": [
+                {"name": "Alice", "region": "EU"},
+                {"name": "Bob", "region": "US"},
+                {"name": "Eve", "region": "EU"},
+            ]}},
+        )
+
+    def test_db_read_through_run_endpoint(self, client: TestClient) -> None:
+        self._seed(client)
+        client.put("/api/modules/rd", json=self._db_read_module("rd"))
+        resp = client.post(
+            "/api/modules/rd/run",
+            json={"input_signal": "trigger", "input_value": "EU"},
+        )
+        assert resp.status_code == 200
+        rows = resp.json()["outputs"]["rows"]
+        assert len(rows) == 1
+        names = sorted(r["name"] for r in rows[0])
+        assert names == ["Alice", "Eve"]
+
+    def test_db_create_does_not_persist_by_default(self, client: TestClient) -> None:
+        self._seed(client)
+        client.put("/api/modules/wr", json=self._db_create_module("wr"))
+        resp = client.post(
+            "/api/modules/wr/run",
+            json={"input_signal": "name", "input_value": "Carol"},
+        )
+        assert resp.status_code == 200
+        # The insert fired in memory ...
+        assert resp.json()["outputs"]["inserted"] == [{"name": "Carol"}]
+        # ... but the saved DB is untouched.
+        rows = client.get("/api/databases/shop/tables/customer/rows").json()
+        assert {r["name"] for r in rows} == {"Alice", "Bob", "Eve"}
+
+    def test_db_create_persists_when_opted_in(self, client: TestClient) -> None:
+        self._seed(client)
+        client.put("/api/modules/wr", json=self._db_create_module("wr"))
+        resp = client.post(
+            "/api/modules/wr/run",
+            json={"input_signal": "name", "input_value": "Carol", "persist": True},
+        )
+        assert resp.status_code == 200
+        rows = client.get("/api/databases/shop/tables/customer/rows").json()
+        assert any(r["name"] == "Carol" for r in rows)

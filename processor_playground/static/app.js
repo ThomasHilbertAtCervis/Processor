@@ -279,18 +279,40 @@ function App() {
     // connectable. The user can refine names/types from the properties
     // panel (signal_name + Data type for module_input/output; per-port
     // editing is on the backlog for python/submodule).
-    const defaults = makeNodeDefaults(type, defaultNodeLabels[type] || type);
-    setNodes((items) => [
-      ...items,
-      {
-        id: genId(),
-        type,
-        position,
-        inputs: defaults.inputs,
-        outputs: defaults.outputs,
-        data: defaults.data,
-      },
-    ]);
+    setNodes((items) => {
+      const defaults = makeNodeDefaults(type, defaultNodeLabels[type] || type);
+      // module_input / module_output contribute to the module's external
+      // interface. We assign a unique default signal_name on drop so the
+      // node is immediately recognised as an input/output (and the Run
+      // button appears); the user can rename it from the properties panel.
+      if (type === 'module_input' || type === 'module_output') {
+        const base = type === 'module_input' ? 'input' : 'output';
+        const taken = new Set(
+          items
+            .filter((node) => node.type === type)
+            .map((node) => (node.data && node.data.signal_name) || '')
+            .filter(Boolean),
+        );
+        let name = base;
+        let counter = 2;
+        while (taken.has(name)) {
+          name = `${base}_${counter}`;
+          counter += 1;
+        }
+        defaults.data = { ...defaults.data, signal_name: name };
+      }
+      return [
+        ...items,
+        {
+          id: genId(),
+          type,
+          position,
+          inputs: defaults.inputs,
+          outputs: defaults.outputs,
+          data: defaults.data,
+        },
+      ];
+    });
   }, [reactFlowInstance, defaultNodeLabels]);
 
   const onSelectModule = useCallback(async (moduleId) => {

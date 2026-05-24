@@ -481,7 +481,11 @@ export function RunPanel({ module, onRun, lastResult, running }) {
   if (inputs.length === 0) {
     return html`
       <div className="run-panel">
-        <div className="run-panel-empty">No module inputs defined. Add one in the Signals panel to enable runs.</div>
+        <div className="run-panel-empty">
+          No module inputs yet. Drag a <strong>Module Input</strong> node from
+          the palette onto the canvas and give it a signal name in the
+          properties panel — the Run controls will appear automatically.
+        </div>
       </div>
     `;
   }

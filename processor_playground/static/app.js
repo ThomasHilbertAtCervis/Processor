@@ -272,7 +272,14 @@ function App() {
     }
     const savedNodes = JSON.stringify(currentModule.nodes || []);
     const savedEdges = JSON.stringify(currentModule.edges || []);
-    if (savedNodes === JSON.stringify(nodes) && savedEdges === JSON.stringify(edges)) {
+    // Compare the *dehydrated* shape against the server copy — the live
+    // ``nodes`` state carries an extra ``data._ports`` mirror added by
+    // ``hydrateNodeForFlow`` that the server never sees. Comparing the
+    // hydrated form to the saved form would always diff and trigger a
+    // save-loop every 900ms, eventually starving the UI of events.
+    const liveNodes = JSON.stringify(nodes.map(dehydrateNodeForWire));
+    const liveEdges = JSON.stringify(edges);
+    if (savedNodes === liveNodes && savedEdges === liveEdges) {
       return;
     }
     saveRef.current();

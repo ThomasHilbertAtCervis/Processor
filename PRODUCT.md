@@ -153,6 +153,12 @@ The user can write Python test scripts (`/api/tests/run`) that:
 The canonical reference example (shared by the owner as a screenshot in
 PR #1, comment immediately preceding commit `d5b6c79`):
 
+![Berlin Warehouse reference diagram](docs/images/berlin-warehouse-reference.png)
+
+> *Reference diagram for the "Berlin Warehouse" example. Source: PR #1
+> comment by @ThomasHilbertAtCervis.
+> Original attachment: <https://github.com/user-attachments/assets/dfbaa517-485a-41b1-acba-57d32acefbec>.*
+
 - **Module being edited:** `Berlin Warehouse`.
 - **Global types in scope:** `ShipmentHandoverEvent`, `StockItemMoveEvent`
   (and the supporting types they reference: `Location`, `DeliveryNote`,
@@ -207,6 +213,7 @@ tracks status. Status uses ✅ done, 🚧 in progress, 📋 backlog,
 | F-014 | Repo state                            | Define clear architectural rules, separate concerns, no business logic in views, document the rules.       | ✅ — see `ARCHITECTURE.md`. |
 | F-015 | Repo state                            | Add unit tests for all main components so behaviour doesn't deteriorate during ongoing development.        | ✅ — 108 tests across 7 files. |
 | F-016 | PR #1 comment 4526108586              | **Track all feature requests and product descriptions in a file** so agents can always refer back to it.   | ✅ — this file. |
+| F-017 | PR #1 comment 4528722855              | **Mirror every reference image the owner shares into the repo** and embed/link them from `PRODUCT.md`, so meaning is conveyed by the artwork instead of by description alone. | 🚧 — convention in place (`docs/images/`, §6); Berlin Warehouse image referenced. Local binary still to be committed (sandbox egress blocks the S3-backed user-attachment URL). |
 
 ### Cross-cutting / always-on requirements
 
@@ -235,3 +242,17 @@ making large decisions.
   `storage/`. Is a database backend in scope later?
 
 When in doubt, ask the owner on the PR rather than guessing.
+
+---
+
+## 6. Reference images
+
+Every image the owner shares (PR comments, issues, discussions) is mirrored
+into [`docs/images/`](docs/images/) so the description above is backed up by
+the artwork the owner actually drew. See
+[`docs/images/README.md`](docs/images/README.md) for the convention and how
+to add new ones.
+
+| File                                                             | Source                                                                                                          | Used in       | Shows                                                              |
+| ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- | ------------- | ------------------------------------------------------------------ |
+| [`docs/images/berlin-warehouse-reference.png`](docs/images/berlin-warehouse-reference.png) | PR #1 comment by @ThomasHilbertAtCervis ([attachment](https://github.com/user-attachments/assets/dfbaa517-485a-41b1-acba-57d32acefbec)) | §3 (this doc) | The "Berlin Warehouse" canonical WYSIWYG layout — module frame, sub-modules with input/output signals, typed signal wires, filtered event trigger, for-each, data-mapping node, global data-type cards. |

@@ -50,6 +50,21 @@ python -m uvicorn processor_playground.api:app --host 0.0.0.0 --port 8000
 
 Then open `http://localhost:8000`.
 
+## Run MCP server (stdio)
+
+The repository now includes an MCP server exposing the same backend capabilities
+as the HTTP API (module/data-type CRUD, simulation, templates, catalogs, script
+testing, health).
+
+```bash
+python -m processor_playground.mcp_server
+```
+
+Optional environment variables (useful for isolated agent/test runs):
+
+- `PROCESSOR_PLAYGROUND_STORAGE_DIR` — modules storage directory
+- `PROCESSOR_PLAYGROUND_DATA_TYPES_DIR` — data-types storage directory
+
 ## Run with Docker
 
 Build the image:

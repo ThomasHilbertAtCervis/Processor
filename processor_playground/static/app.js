@@ -165,8 +165,17 @@ function App() {
     if (!currentModuleId || !currentModule) {
       return;
     }
+    // Guard against a transient mismatch right after switching modules: if
+    // ``currentModule`` hasn't caught up to the new id yet, skip — the
+    // follow-up render will save with consistent state.
+    if (currentModule.module_id && currentModule.module_id !== currentModuleId) {
+      return;
+    }
     const payload = {
       ...currentModule,
+      // Always pin module_id to the URL so the server's path/payload
+      // consistency check can't be tripped by stale closures.
+      module_id: currentModuleId,
       nodes: nodes.map(dehydrateNodeForWire),
       edges,
       inputs: currentModule.inputs || [],
@@ -187,6 +196,13 @@ function App() {
 
   useEffect(() => {
     if (!currentModuleId || !currentModule) {
+      return;
+    }
+    // While ``currentModule`` is catching up to a freshly-selected id, the
+    // ``nodes``/``edges`` state already belongs to the new module — comparing
+    // them to ``currentModule`` (still pointing at the previous module) would
+    // produce a spurious diff and fire an auto-save against the wrong id.
+    if (currentModule.module_id && currentModule.module_id !== currentModuleId) {
       return;
     }
     const savedNodes = JSON.stringify(currentModule.nodes || []);

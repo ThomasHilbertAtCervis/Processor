@@ -66,7 +66,13 @@ shared variables. All a node ever sees is **data arriving on one of its
 inputs**; all a node ever does is **fire data out of one of its outputs**.
 
 - A **module's interface** is its named, typed **input signals** and
-  **output signals**.
+  **output signals**. The interface is **derived from the canvas**:
+  each `module_input` node on the canvas contributes one entry to the
+  module's `inputs`, and each `module_output` node contributes one entry
+  to its `outputs`. The node's `signal_name` and selected data type
+  (edited from the properties panel) become the signal's name and type.
+  There is no separate "Signals" catalog — the canvas is the single
+  source of truth for a module's interface.
 - Inside a module, every node declares **typed input ports** and **typed
   output ports**. A **wire** (edge) connects one output port of a source
   node to one input port of a target node, and so represents both *a path
@@ -266,6 +272,7 @@ tracks status. Status uses ✅ done, 🚧 in progress, 📋 backlog,
 | F-019 | Owner direction, May 2026             | **Python steps must support `if`, `for`, and `foreach`** so non-trivial business logic (e.g. half-or-double) reads naturally instead of being expressed as a sequence of mini-steps. | ✅ — `SafeScriptInterpreter` allow-lists `If` and `For`; covered by tests. |
 | F-020 | Owner direction, May 2026             | **Data-flow execution model.** Data flows along wires; there is no direct variable access. A node only ever receives values on its inputs and fires values on its outputs. Firing an output may suspend the node until a paired response arrives (request/response). Single path of execution, generator-style ergonomics for Python nodes. | ✅ — storage format bumped to v2, v1 files rejected on load; simulator rebuilt around frames + request/response handshake; demo `scripts/build_half_or_double.py` rewritten as `module_input → python (if/else) → module_output`. |
 | F-021 | Owner direction, May 2026             | **Single-input execution contract.** *"Execution of any node or flow is always initiated through a single input. So for execution, we need to first select an input, then specify its value (based on its data type) and then start the execution. This should be possible through UI, Api and MCP."* | ✅ — `Simulator.run(module, *, input_signal, input_value)`; `POST /api/modules/{id}/run` takes `{input_signal, input_value}`; MCP `run_module(module_id, input_signal, input_value)`; UI Run panel above the canvas lets the user pick an input signal, enter a JSON value, and execute. |
+| F-022 | Owner direction, May 2026             | *"there is currently a weird duplication: inputs/outputs are created through the palette AND through the model tab. It should only be possible through the palette by dragging the nodes onto the workflow. Name and data type should be parameters on the node."* | ✅ — `Module.inputs`/`outputs` are now **derived** from `module_input`/`module_output` nodes on the canvas (`models._derive_signals_from_nodes`, applied in both `from_dict` and `to_dict`). The Sidebar "Signals" tab is gone; the PropertiesPanel exposes a *Signal name* + *Data type* editor on those nodes, and palette drops seed a default port so the node is immediately connectable. |
 
 ### Cross-cutting / always-on requirements
 

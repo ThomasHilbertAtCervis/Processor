@@ -138,15 +138,19 @@ class TestEdge:
 
 class TestModule:
     def test_round_trip_preserves_graph(self) -> None:
+        # ``Module.inputs``/``outputs`` are derived from the
+        # ``module_input``/``module_output`` nodes — the port's ``type_ref``
+        # is the signal's type. So the explicit Signal lists passed to the
+        # constructor are ignored on round-trip; what matters is the canvas.
         module = Module(
             module_id="m",
             name="M",
-            inputs=[Signal("a", "string")],
-            outputs=[Signal("b", "int")],
             nodes=[
-                Node(id="i", type="module_input", outputs=[Port("v")],
+                Node(id="i", type="module_input",
+                     outputs=[Port("v", type_ref="string")],
                      data={"signal_name": "a"}),
-                Node(id="o", type="module_output", inputs=[Port("v")],
+                Node(id="o", type="module_output",
+                     inputs=[Port("v", type_ref="int")],
                      data={"signal_name": "b"}),
             ],
             edges=[Edge(id="e", source="i", source_handle="v",
@@ -154,7 +158,10 @@ class TestModule:
             submodules=[Module(module_id="child", name="Child")],
         )
         restored = Module.from_dict(module.to_dict())
-        assert restored == module
+        assert restored.inputs == [Signal("a", "string")]
+        assert restored.outputs == [Signal("b", "int")]
+        assert restored.nodes == module.nodes
+        assert restored.edges == module.edges
 
     def test_rejects_legacy_flow_field(self) -> None:
         with pytest.raises(ValueError, match="format v1 'flow'"):

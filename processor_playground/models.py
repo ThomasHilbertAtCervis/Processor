@@ -237,6 +237,41 @@ class Edge:
 
 # --------------------------------------------------------------------- Module
 
+def _derive_signals_from_nodes(
+    nodes: list["Node"],
+) -> tuple[list["Signal"], list["Signal"]]:
+    """Derive a module's external (inputs, outputs) Signal lists from its
+    ``module_input`` / ``module_output`` nodes.
+
+    The canvas is the single source of truth for the module interface:
+    each ``module_input`` node becomes one entry in ``Module.inputs``
+    (signal name from ``data.signal_name``, type from the node's sole
+    output port) and likewise for ``module_output`` nodes. Nodes
+    without a ``signal_name`` are skipped — they're treated as
+    works-in-progress that the UI lets the user finish naming.
+    """
+    inputs: list[Signal] = []
+    outputs: list[Signal] = []
+    seen_in: set[str] = set()
+    seen_out: set[str] = set()
+    for node in nodes:
+        if node.type == "module_input":
+            name = node.data.get("signal_name", "")
+            if not name or name in seen_in:
+                continue
+            type_ref = node.outputs[0].type_ref if node.outputs else "any"
+            inputs.append(Signal(name=name, type_ref=type_ref))
+            seen_in.add(name)
+        elif node.type == "module_output":
+            name = node.data.get("signal_name", "")
+            if not name or name in seen_out:
+                continue
+            type_ref = node.inputs[0].type_ref if node.inputs else "any"
+            outputs.append(Signal(name=name, type_ref=type_ref))
+            seen_out.add(name)
+    return inputs, outputs
+
+
 @dataclass
 class Module:
     """A process: typed external signals, an internal node/edge graph,
@@ -271,22 +306,40 @@ class Module:
                 "Module storage format v1 'interfaces' mirror is no longer "
                 "supported; declare 'inputs'/'outputs' directly."
             )
+        nodes = [Node.from_dict(item) for item in payload.get("nodes", [])]
+        # Single source of truth: the module's external interface is whatever
+        # ``module_input`` / ``module_output`` nodes the canvas contains.
+        # Any ``inputs``/``outputs`` keys in the payload are ignored — they
+        # were a duplicate the UI used to maintain through a separate
+        # Signals panel. Falling back to payload values is only used if no
+        # interface nodes exist yet (e.g. a freshly-created module).
+        derived_inputs, derived_outputs = _derive_signals_from_nodes(nodes)
+        if not derived_inputs and "inputs" in payload:
+            derived_inputs = [Signal.from_dict(item) for item in payload["inputs"]]
+        if not derived_outputs and "outputs" in payload:
+            derived_outputs = [Signal.from_dict(item) for item in payload["outputs"]]
         return Module(
             module_id=payload["module_id"],
             name=payload["name"],
-            inputs=[Signal.from_dict(item) for item in payload.get("inputs", [])],
-            outputs=[Signal.from_dict(item) for item in payload.get("outputs", [])],
-            nodes=[Node.from_dict(item) for item in payload.get("nodes", [])],
+            inputs=derived_inputs,
+            outputs=derived_outputs,
+            nodes=nodes,
             edges=[Edge.from_dict(item) for item in payload.get("edges", [])],
             submodules=[Module.from_dict(item) for item in payload.get("submodules", [])],
         )
 
     def to_dict(self) -> dict[str, Any]:
+        # Re-derive on the way out too so that an in-memory edit to the
+        # nodes list is reflected without needing a round-trip through the
+        # repository.
+        derived_inputs, derived_outputs = _derive_signals_from_nodes(self.nodes)
+        inputs = derived_inputs or self.inputs
+        outputs = derived_outputs or self.outputs
         return {
             "module_id": self.module_id,
             "name": self.name,
-            "inputs": [s.to_dict() for s in self.inputs],
-            "outputs": [s.to_dict() for s in self.outputs],
+            "inputs": [s.to_dict() for s in inputs],
+            "outputs": [s.to_dict() for s in outputs],
             "nodes": [n.to_dict() for n in self.nodes],
             "edges": [e.to_dict() for e in self.edges],
             "submodules": [m.to_dict() for m in self.submodules],

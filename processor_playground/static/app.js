@@ -43,6 +43,50 @@ function dehydrateNodeForWire(node) {
   return { ...node, data: restData };
 }
 
+// Seed default ports / data for a freshly-dropped palette node. Each kind
+// starts immediately connectable: a module_input has one source port, a
+// module_output has one target port, a python node starts with one of each
+// (the user adds more from the script as needed), and a submodule starts
+// portless until the user picks which module to embed.
+function makeNodeDefaults(type, label) {
+  const defaultDataPort = (name) => ({ name, type_ref: 'any', kind: 'data' });
+  if (type === 'module_input') {
+    const outputs = [defaultDataPort('value')];
+    return {
+      inputs: [],
+      outputs,
+      data: { label, signal_name: '', signal_type: 'any', _ports: { inputs: [], outputs } },
+    };
+  }
+  if (type === 'module_output') {
+    const inputs = [defaultDataPort('value')];
+    return {
+      inputs,
+      outputs: [],
+      data: { label, signal_name: '', signal_type: 'any', _ports: { inputs, outputs: [] } },
+    };
+  }
+  if (type === 'python') {
+    const inputs = [defaultDataPort('in')];
+    const outputs = [defaultDataPort('out')];
+    return {
+      inputs,
+      outputs,
+      data: {
+        label,
+        code: "outputs['out'] = inputs['in']\n",
+        _ports: { inputs, outputs },
+      },
+    };
+  }
+  // submodule and any future kind: empty until configured.
+  return {
+    inputs: [],
+    outputs: [],
+    data: { label, _ports: { inputs: [], outputs: [] } },
+  };
+}
+
 function App() {
   const [modules, setModules] = useState([]);
   const [dataTypes, setDataTypes] = useState([]);
@@ -177,11 +221,30 @@ function App() {
   }, [loadModule, showStatus]);
 
   const onUpdateNode = useCallback((nodeId, newData) => {
-    setNodes((items) => items.map((node) => (
-      node.id === nodeId
-        ? { ...node, data: { ...node.data, ...newData } }
-        : node
-    )));
+    setNodes((items) => items.map((node) => {
+      if (node.id !== nodeId) {
+        return node;
+      }
+      const mergedData = { ...node.data, ...newData };
+      let inputs = node.inputs;
+      let outputs = node.outputs;
+      // module_input / module_output nodes carry exactly one data port; the
+      // user picks its type via the "Data type" dropdown in the properties
+      // panel, which we mirror onto the port so the derived Module.inputs /
+      // Module.outputs round-trips with the right type_ref.
+      if (node.type === 'module_input' && newData.signal_type !== undefined) {
+        const port = (outputs && outputs[0]) || { name: 'value', kind: 'data' };
+        outputs = [{ ...port, type_ref: newData.signal_type || 'any' }];
+      }
+      if (node.type === 'module_output' && newData.signal_type !== undefined) {
+        const port = (inputs && inputs[0]) || { name: 'value', kind: 'data' };
+        inputs = [{ ...port, type_ref: newData.signal_type || 'any' }];
+      }
+      // Keep the view-only ports mirror in sync so the canvas renders the
+      // updated handle without a reload.
+      mergedData._ports = { inputs: inputs || [], outputs: outputs || [] };
+      return { ...node, data: mergedData, inputs, outputs };
+    }));
   }, []);
 
   const onUpdateEdge = useCallback((edgeId, newData) => {
@@ -212,13 +275,20 @@ function App() {
       x: event.clientX - bounds.left,
       y: event.clientY - bounds.top,
     });
+    // Each node kind starts with sensible default ports so it's immediately
+    // connectable. The user can refine names/types from the properties
+    // panel (signal_name + Data type for module_input/output; per-port
+    // editing is on the backlog for python/submodule).
+    const defaults = makeNodeDefaults(type, defaultNodeLabels[type] || type);
     setNodes((items) => [
       ...items,
       {
         id: genId(),
         type,
         position,
-        data: { label: defaultNodeLabels[type] || type },
+        inputs: defaults.inputs,
+        outputs: defaults.outputs,
+        data: defaults.data,
       },
     ]);
   }, [reactFlowInstance, defaultNodeLabels]);
@@ -269,31 +339,6 @@ function App() {
       showStatus(`Delete failed: ${error.message}`, true);
     }
   }, [currentModuleId, loadModule, modules, showStatus]);
-
-  const onSaveSignals = useCallback(async ({ inputs, outputs }) => {
-    if (!currentModuleId || !currentModule) {
-      return;
-    }
-    try {
-      const saved = await apiPut(`/api/modules/${currentModuleId}`, {
-        ...currentModule,
-        inputs,
-        outputs,
-        nodes,
-        edges,
-      });
-      setCurrentModule(saved);
-      setModules((items) => items.map((item) => (item.module_id === saved.module_id ? saved : item)));
-      setNodes((items) => items.map((node) => (
-        node.type === 'submodule' && node.data?.moduleId === currentModuleId
-          ? { ...node, data: { ...node.data, label: saved.name, inputs: saved.inputs || [], outputs: saved.outputs || [] } }
-          : node
-      )));
-      showStatus('Signals saved');
-    } catch (error) {
-      showStatus(`Save failed: ${error.message}`, true);
-    }
-  }, [currentModule, currentModuleId, edges, nodes, showStatus]);
 
   const onSaveDt = useCallback(async (dataType) => {
     try {
@@ -362,7 +407,6 @@ function App() {
         onSaveDt=${onSaveDt}
         onDeleteDt=${onDeleteDt}
         currentModule=${currentModule}
-        onSaveSignals=${onSaveSignals}
         activeTab=${activeTab}
         setActiveTab=${setActiveTab}
       />
@@ -409,6 +453,7 @@ function App() {
         onUpdateNode=${onUpdateNode}
         onUpdateEdge=${onUpdateEdge}
         dataTypes=${dataTypes}
+        primitives=${primitives}
         modules=${modules}
       />
     </div>

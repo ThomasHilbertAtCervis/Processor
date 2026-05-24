@@ -20,7 +20,7 @@ export const EDGE_MARKER = MarkerType?.ArrowClosed ?? 'arrowclosed';
 
 // --------------------------------------------------------- PropertiesPanel
 
-export function PropertiesPanel({ selected, nodes, edges, onUpdateNode, onUpdateEdge, dataTypes, modules }) {
+export function PropertiesPanel({ selected, nodes, edges, onUpdateNode, onUpdateEdge, dataTypes, primitives = [], modules }) {
   const [localData, setLocalData] = useState({});
   const item = selected
     ? selected.type === 'node'
@@ -29,7 +29,16 @@ export function PropertiesPanel({ selected, nodes, edges, onUpdateNode, onUpdate
     : null;
 
   useEffect(() => {
-    setLocalData(item ? { ...(item.data || {}), label: item.label || item.data?.label || '' } : {});
+    if (!item) { setLocalData({}); return; }
+    const base = { ...(item.data || {}), label: item.label || item.data?.label || '' };
+    // Seed signal_type from the existing port so the select reflects reality
+    // for module_input/output nodes that were created before this field existed.
+    if (item.type === 'module_input' && item.outputs && item.outputs[0] && !base.signal_type) {
+      base.signal_type = item.outputs[0].type_ref || 'any';
+    } else if (item.type === 'module_output' && item.inputs && item.inputs[0] && !base.signal_type) {
+      base.signal_type = item.inputs[0].type_ref || 'any';
+    }
+    setLocalData(base);
   }, [item?.id, selected?.type]);
 
   if (!selected || !item) {
@@ -61,6 +70,37 @@ export function PropertiesPanel({ selected, nodes, edges, onUpdateNode, onUpdate
             <label>Label</label>
             <input value=${localData.label || ''} onInput=${(event) => setField('label', event.target.value)} />
           </div>
+          ${(nodeType === 'module_input' || nodeType === 'module_output') && html`
+            <div className="prop-row">
+              <label>Signal name</label>
+              <input
+                value=${localData.signal_name || ''}
+                placeholder="e.g. order_received"
+                onInput=${(event) => setField('signal_name', event.target.value)}
+              />
+            </div>
+            <div className="prop-row">
+              <label>Data type</label>
+              <select
+                value=${localData.signal_type
+                  || (nodeType === 'module_input'
+                        ? (item.outputs && item.outputs[0] && item.outputs[0].type_ref)
+                        : (item.inputs && item.inputs[0] && item.inputs[0].type_ref))
+                  || 'any'}
+                onChange=${(event) => setField('signal_type', event.target.value)}
+              >
+                ${[...primitives, ...dataTypes.map((dt) => dt.type_id)].map((typeName) => html`
+                  <option key=${typeName} value=${typeName}>${typeName}</option>
+                `)}
+              </select>
+            </div>
+            <p className="prop-hint">
+              This node is the module's external
+              ${nodeType === 'module_input' ? ' input' : ' output'}.
+              Its signal name and data type define the module's
+              ${nodeType === 'module_input' ? ' inputs' : ' outputs'} entry.
+            </p>
+          `}
           ${(nodeType === 'event' || nodeType === 'emit') && html`
             <div className="prop-row">
               <label>Signal Type</label>
@@ -347,49 +387,13 @@ export function DataTypePanel({ dataTypes, primitives, onSave, onDelete }) {
   `;
 }
 
-// ------------------------------------------------------ ModuleSignalsPanel
-
-export function ModuleSignalsPanel({ module, dataTypes, primitives, onSave }) {
-  const [inputs, setInputs] = useState(module?.inputs || []);
-  const [outputs, setOutputs] = useState(module?.outputs || []);
-  const typeOptions = [...primitives, ...dataTypes.map((dataType) => dataType.type_id)];
-
-  useEffect(() => {
-    setInputs(module?.inputs || []);
-    setOutputs(module?.outputs || []);
-  }, [module?.module_id]);
-
-  const renderSignals = (signals, setSignals, heading, buttonText) => html`
-    <div className="signals-section">
-      <div className="signals-header">${heading}</div>
-      ${signals.map((signal, idx) => html`
-        <div key=${idx} className="signal-row">
-          <input
-            value=${signal.name || ''}
-            placeholder="name"
-            onInput=${(event) => setSignals((items) => items.map((item, itemIndex) => itemIndex === idx ? { ...item, name: event.target.value } : item))}
-          />
-          <select
-            value=${signal.type_ref || 'any'}
-            onChange=${(event) => setSignals((items) => items.map((item, itemIndex) => itemIndex === idx ? { ...item, type_ref: event.target.value } : item))}
-          >
-            ${typeOptions.map((typeName) => html`<option key=${typeName} value=${typeName}>${typeName}</option>`)}
-          </select>
-          <button className="btn-icon" onClick=${() => setSignals((items) => items.filter((_, itemIndex) => itemIndex !== idx))}>✕</button>
-        </div>
-      `)}
-      <button className="btn-small" onClick=${() => setSignals((items) => [...items, { name: '', type_ref: 'any', filter: null }])}>${buttonText}</button>
-    </div>
-  `;
-
-  return html`
-    <div className="module-signals">
-      ${renderSignals(inputs, setInputs, 'Inputs', '+ Add Input')}
-      ${renderSignals(outputs, setOutputs, 'Outputs', '+ Add Output')}
-      <button className="btn-save" onClick=${() => onSave({ inputs, outputs })}>Save Signals</button>
-    </div>
-  `;
-}
+// ------------------------------------------------------ (ModuleSignalsPanel removed)
+//
+// Module inputs/outputs are no longer maintained through a separate
+// Signals tab. They are derived from the ``module_input``/``module_output``
+// nodes on the canvas (see models._derive_signals_from_nodes). To add or
+// rename a module signal, drop the corresponding node from the palette and
+// edit its ``Signal name`` / ``Data type`` in the properties panel.
 
 // --------------------------------------------------------- DiagramCanvas
 
@@ -531,7 +535,6 @@ export function Sidebar({
   onSaveDt,
   onDeleteDt,
   currentModule,
-  onSaveSignals,
   activeTab,
   setActiveTab,
 }) {
@@ -587,9 +590,14 @@ export function Sidebar({
         </div>
         ${currentModule
           ? html`
-              <div className="sidebar-section">
-                <div className="section-header">Signals: ${currentModule.name}</div>
-                <${ModuleSignalsPanel} module=${currentModule} dataTypes=${dataTypes} primitives=${primitives} onSave=${onSaveSignals} />
+              <div className="sidebar-section sidebar-hint">
+                <div className="section-header">Module signals</div>
+                <p className="section-hint">
+                  Drag <em>Module Input</em> / <em>Module Output</em> nodes from the
+                  <strong>Palette</strong> onto the canvas. Set each node's signal name
+                  and data type from the properties panel — the module's external
+                  inputs/outputs are derived from those nodes.
+                </p>
               </div>
             `
           : null}

@@ -104,6 +104,31 @@ class TestModuleEndpoints:
         ids = [m["module_id"] for m in client.get("/api/modules").json()]
         assert ids == ["a", "b"]
 
+    def test_post_creates_empty_module_from_server_template(self, client: TestClient) -> None:
+        response = client.post(
+            "/api/modules",
+            json={"module_id": "fresh", "name": "Fresh"},
+        )
+        assert response.status_code == 201
+        body = response.json()
+        assert body["module_id"] == "fresh"
+        assert body["name"] == "Fresh"
+        # Server-side template guarantees empty collections — the client must
+        # not be free to invent a different starting shape.
+        assert body["inputs"] == []
+        assert body["outputs"] == []
+        assert body["nodes"] == []
+        assert body["edges"] == []
+        assert body["flow"] == []
+        assert body["submodules"] == []
+        # And it is actually persisted.
+        assert client.get("/api/modules/fresh").status_code == 200
+
+    def test_post_duplicate_module_is_409(self, client: TestClient) -> None:
+        client.post("/api/modules", json={"module_id": "dup", "name": "Dup"})
+        response = client.post("/api/modules", json={"module_id": "dup", "name": "Dup"})
+        assert response.status_code == 409
+
 
 # -------------------------------------------------------------- data-types
 
@@ -132,6 +157,50 @@ class TestDataTypeEndpoints:
             "/api/data-types/A",
             json={"type_id": "B", "name": "B"},
         ).status_code == 400
+
+    def test_primitives_endpoint(self, client: TestClient) -> None:
+        body = client.get("/api/data-types/primitives").json()
+        # Stable, server-owned catalog — the frontend must not maintain its own.
+        assert body == ["int", "decimal", "string", "bool", "timestamp", "any"]
+
+    def test_struct_payload_with_stray_element_type_is_normalised(self, client: TestClient) -> None:
+        # A client that forgets the kind/fields invariant must still get a
+        # valid stored shape — the rule lives in DataType.from_dict.
+        response = client.put(
+            "/api/data-types/S",
+            json={
+                "type_id": "S",
+                "name": "S",
+                "kind": "struct",
+                "fields": [{"name": "x", "type_ref": "int"}],
+                "element_type": "string",  # bogus for a struct
+            },
+        )
+        body = response.json()
+        assert body["element_type"] is None
+        assert body["fields"] == [{"name": "x", "type_ref": "int"}]
+
+    def test_array_payload_with_stray_fields_is_normalised(self, client: TestClient) -> None:
+        response = client.put(
+            "/api/data-types/A",
+            json={
+                "type_id": "A",
+                "name": "A",
+                "kind": "array",
+                "fields": [{"name": "ghost", "type_ref": "int"}],  # bogus for array
+                "element_type": "string",
+            },
+        )
+        body = response.json()
+        assert body["fields"] == []
+        assert body["element_type"] == "string"
+
+    def test_array_payload_without_element_type_defaults_to_any(self, client: TestClient) -> None:
+        response = client.put(
+            "/api/data-types/Bag",
+            json={"type_id": "Bag", "name": "Bag", "kind": "array"},
+        )
+        assert response.json()["element_type"] == "any"
 
 
 # ----------------------------------------------------------------- run
@@ -205,6 +274,18 @@ class TestMiscEndpoints:
         body = client.get("/api/templates/default-module").json()
         assert body["module_id"] == "example-module"
         assert body["nodes"]
+
+    def test_node_kinds_catalog(self, client: TestClient) -> None:
+        body = client.get("/api/node-kinds").json()
+        types = [entry["type"] for entry in body]
+        # All eight kinds described in PRODUCT.md §2, in palette order.
+        assert types == [
+            "start", "event", "condition", "foreach",
+            "submodule", "emit", "datamapping", "end",
+        ]
+        for entry in body:
+            assert entry["palette_label"]
+            assert entry["default_label"]
 
     def test_index_html_served(self, client: TestClient) -> None:
         response = client.get("/")

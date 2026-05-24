@@ -30,12 +30,22 @@ class DataType:
 
     @staticmethod
     def from_dict(payload: dict[str, Any]) -> "DataType":
+        kind = payload.get("kind", "struct")
+        # Domain rule: struct types own a `fields` list; array/dict types own
+        # an `element_type` instead. Normalise here so every client (UI, MCP
+        # server, scripts) sends only what the type's kind actually uses.
+        if kind == "struct":
+            fields = [DataTypeField.from_dict(item) for item in payload.get("fields", [])]
+            element_type = None
+        else:
+            fields = []
+            element_type = payload.get("element_type") or "any"
         return DataType(
             type_id=payload["type_id"],
             name=payload["name"],
-            kind=payload.get("kind", "struct"),
-            fields=[DataTypeField.from_dict(item) for item in payload.get("fields", [])],
-            element_type=payload.get("element_type"),
+            kind=kind,
+            fields=fields,
+            element_type=element_type,
         )
 
     def to_dict(self) -> dict[str, Any]:

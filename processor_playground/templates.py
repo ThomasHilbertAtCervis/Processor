@@ -83,3 +83,26 @@ def default_module_payload() -> dict[str, Any]:
 def default_module() -> Module:
     """Return the default module as a fully constructed :class:`Module`."""
     return Module.from_dict(default_module_payload())
+
+
+def new_module_payload(module_id: str, name: str) -> dict[str, Any]:
+    """Raw dict for a freshly created empty module.
+
+    Shared by every client (UI, MCP server, scripts) so that "create a new
+    module" means the same thing everywhere — see ARCHITECTURE.md.
+    """
+    return {
+        "module_id": module_id,
+        "name": name,
+        "inputs": [],
+        "outputs": [],
+        "nodes": [],
+        "edges": [],
+        "flow": [],
+        "submodules": [],
+    }
+
+
+def new_module(module_id: str, name: str) -> Module:
+    """Return a freshly constructed, empty :class:`Module`."""
+    return Module.from_dict(new_module_payload(module_id, name))

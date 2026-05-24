@@ -13,7 +13,7 @@ import ReactFlow, {
   MiniMap,
 } from 'reactflow';
 import { html } from './lib/html.js';
-import { NODE_TYPES, PALETTE_NODES, PRIMITIVES } from './nodes.js';
+import { NODE_TYPES } from './nodes.js';
 
 // esm.sh/reactflow builds can differ slightly in enum shape, so keep a string fallback.
 export const EDGE_MARKER = MarkerType?.ArrowClosed ?? 'arrowclosed';
@@ -159,13 +159,13 @@ export function PropertiesPanel({ selected, nodes, edges, onUpdateNode, onUpdate
 
 // ------------------------------------------------------------ DataTypePanel
 
-export function DataTypePanel({ dataTypes, onSave, onDelete }) {
+export function DataTypePanel({ dataTypes, primitives, onSave, onDelete }) {
   const [editing, setEditing] = useState(null);
   const [newField, setNewField] = useState({ name: '', type_ref: 'string' });
 
   const beginNew = () => setEditing({ type_id: '', name: '', kind: 'struct', fields: [], element_type: 'any' });
   const beginEdit = (dataType) => setEditing(JSON.parse(JSON.stringify(dataType)));
-  const allTypes = [...PRIMITIVES, ...dataTypes.map((dataType) => dataType.type_id)];
+  const allTypes = [...primitives, ...dataTypes.map((dataType) => dataType.type_id)];
 
   if (editing) {
     return html`
@@ -248,12 +248,15 @@ export function DataTypePanel({ dataTypes, onSave, onDelete }) {
           <button
             className="btn-save"
             onClick=${() => {
+              // No kind/fields/element_type normalisation here — the backend
+              // owns the invariant (see DataType.from_dict). We just send
+              // exactly what the editor has, and let the server canonicalise.
               onSave({
                 type_id: editing.type_id,
                 name: editing.name,
                 kind: editing.kind,
-                fields: editing.kind === 'struct' ? (editing.fields || []) : [],
-                element_type: editing.kind === 'struct' ? null : editing.element_type || 'any',
+                fields: editing.fields || [],
+                element_type: editing.element_type || null,
               });
               setEditing(null);
             }}
@@ -297,10 +300,10 @@ export function DataTypePanel({ dataTypes, onSave, onDelete }) {
 
 // ------------------------------------------------------ ModuleSignalsPanel
 
-export function ModuleSignalsPanel({ module, dataTypes, onSave }) {
+export function ModuleSignalsPanel({ module, dataTypes, primitives, onSave }) {
   const [inputs, setInputs] = useState(module?.inputs || []);
   const [outputs, setOutputs] = useState(module?.outputs || []);
-  const typeOptions = [...PRIMITIVES, ...dataTypes.map((dataType) => dataType.type_id)];
+  const typeOptions = [...primitives, ...dataTypes.map((dataType) => dataType.type_id)];
 
   useEffect(() => {
     setInputs(module?.inputs || []);
@@ -398,6 +401,8 @@ export function Sidebar({
   onNewModule,
   onDeleteModule,
   dataTypes,
+  primitives,
+  nodeKinds,
   onSaveDt,
   onDeleteDt,
   currentModule,
@@ -459,7 +464,7 @@ export function Sidebar({
           ? html`
               <div className="sidebar-section">
                 <div className="section-header">Signals: ${currentModule.name}</div>
-                <${ModuleSignalsPanel} module=${currentModule} dataTypes=${dataTypes} onSave=${onSaveSignals} />
+                <${ModuleSignalsPanel} module=${currentModule} dataTypes=${dataTypes} primitives=${primitives} onSave=${onSaveSignals} />
               </div>
             `
           : null}
@@ -469,7 +474,7 @@ export function Sidebar({
         <div className="sidebar-section">
           <div className="section-header">Global Data Types</div>
           <p className="section-hint">Shared across all modules. Used to type signals and connections.</p>
-          <${DataTypePanel} dataTypes=${dataTypes} onSave=${onSaveDt} onDelete=${onDeleteDt} />
+          <${DataTypePanel} dataTypes=${dataTypes} primitives=${primitives} onSave=${onSaveDt} onDelete=${onDeleteDt} />
         </div>
       `}
 
@@ -477,14 +482,14 @@ export function Sidebar({
         <div className="sidebar-section">
           <div className="section-header">Node Palette</div>
           <p className="palette-hint">Drag a node onto the canvas.</p>
-          ${PALETTE_NODES.map((node) => html`
+          ${nodeKinds.map((node) => html`
             <div
               key=${node.type}
               className=${`palette-item palette-${node.type}`}
               draggable=${true}
               onDragStart=${(event) => onPaletteDragStart(event, node.type)}
             >
-              ${node.label}
+              ${node.palette_label}
             </div>
           `)}
         </div>

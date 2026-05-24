@@ -27,6 +27,13 @@ changes the code.
 5. **One source of truth per concern.** Persistence rules live in the
    repository layer. Execution rules live in the simulator. Wire-format rules
    live in the model classes. UI rules live in components.
+6. **Backend is the sole source of truth; the frontend is one of many clients.**
+   Every domain decision — what kinds of nodes exist, what a fresh module looks
+   like, which types are primitive, how an entity is normalised before
+   storage — lives behind the HTTP API. The React UI is a thin client; an MCP
+   server (planned) and any future automation will reuse the same service
+   layer. If the React app were deleted, nothing about *what the platform
+   does* would change.
 
 ## 2. Layers (backend)
 
@@ -100,12 +107,17 @@ static/
   subpath bundles a second React copy and silently breaks hooks).
 - **Only `lib/api.js` calls `fetch`.** Components receive callbacks and data;
   they do not know URLs.
-- **No business defaults inside event handlers.** Default labels, default
-  signal shapes, and palette content live as exported constants in
-  `nodes.js`.
+- **No domain catalogs in the frontend.** Lists like the eight node kinds,
+  their default labels, or the set of primitive type identifiers come from
+  the backend (`/api/node-kinds`, `/api/data-types/primitives`). The
+  frontend renders what it is told.
+- **No business defaults inside event handlers.** A freshly created module
+  is built by `POST /api/modules`; a freshly dropped node's starter label
+  comes from the node-kinds catalog. The frontend never invents an empty
+  shape on its own.
 - **Components are stateless about persistence.** They render props and emit
   user intent via callbacks. The `App` component is the only place that
-  decides when to `apiPut` / `apiDelete`.
+  decides when to `apiPost` / `apiPut` / `apiDelete`.
 
 ## 4. Adding things — the cookbook
 
@@ -137,6 +149,8 @@ These appear in pull requests from time to time. They are rejected on sight.
 - ❌ A FastAPI route that opens a file, parses JSON by hand, or runs a
       simulation step inline.
 - ❌ A React component that hard-codes an API URL or path segment.
+- ❌ A React component that hard-codes a domain catalog (node kinds, primitive
+      types, default templates). Fetch it from the backend instead.
 - ❌ A React component that imports another React copy
       (`'htm/react'`, `'react@17'`, etc.).
 - ❌ A test that mutates a module-level singleton instead of using

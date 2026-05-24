@@ -26,9 +26,11 @@ from pydantic import BaseModel, Field
 
 from .data_type_repository import DataTypeRepository
 from .models import DataType, Module
+from .node_kinds import list_node_kinds
+from .primitives import list_primitive_type_ids
 from .repository import ModuleRepository
 from .simulator import Simulator
-from .templates import default_module
+from .templates import default_module, new_module
 from .testing import ScriptTestRunner
 
 # --------------------------------------------------------------------- paths
@@ -96,6 +98,18 @@ class ScriptPayload(BaseModel):
     script: str = Field(min_length=1)
 
 
+class NewModulePayload(BaseModel):
+    """Body for ``POST /api/modules`` — only the bits a client must supply.
+
+    The rest of a fresh module (empty inputs/outputs/nodes/edges/flow/
+    submodules) is filled in server-side by ``templates.new_module`` so every
+    client gets the same starting shape.
+    """
+
+    module_id: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+
+
 # ------------------------------------------------------------------- app
 
 app = FastAPI(title="Process Playground")
@@ -121,6 +135,18 @@ def get_module(
     module = modules.get(module_id)
     if not module:
         raise HTTPException(status_code=404, detail="Module not found")
+    return module.to_dict()
+
+
+@app.post("/api/modules", status_code=201)
+def create_module(
+    payload: NewModulePayload,
+    modules: ModuleRepository = Depends(get_module_repository),
+) -> dict[str, Any]:
+    if modules.get(payload.module_id):
+        raise HTTPException(status_code=409, detail="Module already exists")
+    module = new_module(payload.module_id, payload.name)
+    modules.save(module)
     return module.to_dict()
 
 
@@ -165,6 +191,16 @@ def list_data_types(
     data_types: DataTypeRepository = Depends(get_data_type_repository),
 ) -> list[dict[str, Any]]:
     return [data_type.to_dict() for data_type in data_types.list()]
+
+
+@app.get("/api/data-types/primitives")
+def list_primitives() -> list[str]:
+    """Identifiers of the built-in primitive types (``int``, ``string``, …).
+
+    Declared *before* ``/api/data-types/{type_id}`` so the static segment
+    wins the route match.
+    """
+    return list_primitive_type_ids()
 
 
 @app.get("/api/data-types/{type_id}")
@@ -212,6 +248,17 @@ def run_script_test(
 @app.get("/api/templates/default-module")
 def default_module_template() -> dict[str, Any]:
     return default_module().to_dict()
+
+
+@app.get("/api/node-kinds")
+def list_node_kinds_endpoint() -> list[dict[str, Any]]:
+    """Catalog of node kinds (type, palette label, default label).
+
+    The frontend uses this to render the palette and seed labels for freshly
+    placed nodes; an MCP agent uses it to know what nodes it is allowed to
+    add to a module. Single source of truth lives in ``node_kinds.py``.
+    """
+    return [kind.to_dict() for kind in list_node_kinds()]
 
 
 @app.get("/health")

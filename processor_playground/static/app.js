@@ -8,13 +8,12 @@
 // It does NOT own component markup (that's in components.js / nodes.js)
 // and does NOT own fetch (that's in lib/api.js).
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { addEdge, applyEdgeChanges, applyNodeChanges } from 'reactflow';
 
 import { html, debounce, genId } from './lib/html.js';
-import { apiGet, apiPut, apiDelete } from './lib/api.js';
-import { DEFAULT_NODE_LABELS } from './nodes.js';
+import { apiGet, apiPut, apiPost, apiDelete } from './lib/api.js';
 import {
   EDGE_MARKER,
   PropertiesPanel,
@@ -25,6 +24,8 @@ import {
 function App() {
   const [modules, setModules] = useState([]);
   const [dataTypes, setDataTypes] = useState([]);
+  const [primitives, setPrimitives] = useState([]);
+  const [nodeKinds, setNodeKinds] = useState([]);
   const [currentModuleId, setCurrentModuleId] = useState(null);
   const [currentModule, setCurrentModule] = useState(null);
   const [nodes, setNodes] = useState([]);
@@ -36,6 +37,16 @@ function App() {
   const [reactFlowInstance, setReactFlowInstance] = useState(null);
   const saveRef = useRef(() => {});
   const showStatusRef = useRef(null);
+
+  // Derived from the server-owned catalog so a freshly dropped node gets the
+  // same starter label every client agrees on.
+  const defaultNodeLabels = useMemo(() => {
+    const map = {};
+    for (const kind of nodeKinds) {
+      map[kind.type] = kind.default_label;
+    }
+    return map;
+  }, [nodeKinds]);
 
   const showStatus = useCallback((message, isErr = false) => {
     if (showStatusRef.current) {
@@ -68,7 +79,12 @@ function App() {
   }, []);
 
   useEffect(() => {
-    Promise.all([refreshModules(), refreshDataTypes()])
+    Promise.all([
+      refreshModules(),
+      refreshDataTypes(),
+      apiGet('/api/data-types/primitives').then(setPrimitives),
+      apiGet('/api/node-kinds').then(setNodeKinds),
+    ])
       .then(async ([modulePayload]) => {
         if (modulePayload.length) {
           await loadModule(modulePayload[0].module_id);
@@ -179,10 +195,10 @@ function App() {
         id: genId(),
         type,
         position,
-        data: { label: DEFAULT_NODE_LABELS[type] || type },
+        data: { label: defaultNodeLabels[type] || type },
       },
     ]);
-  }, [reactFlowInstance]);
+  }, [reactFlowInstance, defaultNodeLabels]);
 
   const onSelectModule = useCallback(async (moduleId) => {
     try {
@@ -195,16 +211,10 @@ function App() {
 
   const onNewModule = useCallback(async (moduleId, name) => {
     try {
-      const saved = await apiPut(`/api/modules/${moduleId}`, {
-        module_id: moduleId,
-        name,
-        inputs: [],
-        outputs: [],
-        nodes: [],
-        edges: [],
-        flow: [],
-        submodules: [],
-      });
+      // The backend constructs the empty-module shape from its own template
+      // (templates.new_module) so every client — UI, MCP server, scripts —
+      // starts from the same skeleton.
+      const saved = await apiPost('/api/modules', { module_id: moduleId, name });
       setModules((items) => [...items, saved].sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: 'base' })));
       await loadModule(moduleId);
       showStatus('Module created');
@@ -300,6 +310,8 @@ function App() {
         onNewModule=${onNewModule}
         onDeleteModule=${onDeleteModule}
         dataTypes=${dataTypes}
+        primitives=${primitives}
+        nodeKinds=${nodeKinds}
         onSaveDt=${onSaveDt}
         onDeleteDt=${onDeleteDt}
         currentModule=${currentModule}

@@ -21,6 +21,21 @@ export async function apiPut(path, body) {
   return response.json();
 }
 
+export async function apiPost(path, body) {
+  const response = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  if (response.status === 204) {
+    return null;
+  }
+  return response.json();
+}
+
 export async function apiDelete(path) {
   const response = await fetch(path, { method: 'DELETE' });
   if (!response.ok) {

@@ -1,10 +1,13 @@
-// ReactFlow node components and the palette/default-label configuration.
+// ReactFlow node components.
 // Pure view + view-data. No fetch calls, no App state.
+//
+// Domain knowledge — which kinds of nodes exist, what their default labels
+// are, which primitive types the platform recognises — lives in the backend
+// and is fetched at runtime. See ARCHITECTURE.md ("Backend is the sole
+// source of truth").
 
 import { Handle, Position } from 'reactflow';
 import { html } from './lib/html.js';
-
-export const PRIMITIVES = ['int', 'decimal', 'string', 'bool', 'timestamp', 'any'];
 
 const StartNode = ({ selected }) => html`
   <div className=${`node-start${selected ? ' selected' : ''}`}>
@@ -101,28 +104,4 @@ export const NODE_TYPES = {
   emit: EmitNode,
   end: EndNode,
   datamapping: DataMappingNode,
-};
-
-export const PALETTE_NODES = [
-  { type: 'start', label: '● Start' },
-  { type: 'event', label: '▷ Event Trigger' },
-  { type: 'condition', label: '□ Condition / Action' },
-  { type: 'foreach', label: '‖ For Each' },
-  { type: 'submodule', label: '⊞ Sub-module' },
-  { type: 'emit', label: '▶ Emit Event' },
-  { type: 'datamapping', label: '⇄ Data Mapping' },
-  { type: 'end', label: '◉ End' },
-];
-
-// Default label for a node freshly dropped on the canvas. Living here keeps
-// the App component free of business defaults (see ARCHITECTURE.md).
-export const DEFAULT_NODE_LABELS = {
-  start: 'Start',
-  event: 'Event Trigger',
-  condition: 'Condition',
-  foreach: 'foreach',
-  submodule: 'Sub-module',
-  emit: 'Emit Event',
-  datamapping: 'Data Mapping',
-  end: 'End',
 };

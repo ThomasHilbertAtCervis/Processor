@@ -214,6 +214,7 @@ tracks status. Status uses ✅ done, 🚧 in progress, 📋 backlog,
 | F-015 | Repo state                            | Add unit tests for all main components so behaviour doesn't deteriorate during ongoing development.        | ✅ — 108 tests across 7 files. |
 | F-016 | PR #1 comment 4526108586              | **Track all feature requests and product descriptions in a file** so agents can always refer back to it.   | ✅ — this file. |
 | F-017 | PR #1 comment 4528722855              | **Mirror every reference image the owner shares into the repo** and embed/link them from `PRODUCT.md`, so meaning is conveyed by the artwork instead of by description alone. | 🚧 — convention in place (`docs/images/`, §6); Berlin Warehouse image referenced. Local binary still to be committed (sandbox egress blocks the S3-backed user-attachment URL). |
+| F-018 | PR #1 comment 4528891051              | **All relevant business logic must execute in the backend.** The frontend is one of many clients (an MCP server is planned so other agents can drive the platform). The UI must never own domain catalogs, normalisation rules, or default-template shapes. | ✅ — moved node-kinds catalog, primitive types, new-module template, and DataType normalisation to the backend behind `/api/node-kinds`, `/api/data-types/primitives`, `POST /api/modules`. ARCHITECTURE.md §1 Goal 6 codifies the rule. |
 
 ### Cross-cutting / always-on requirements
 

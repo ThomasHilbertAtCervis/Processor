@@ -2,7 +2,12 @@
 from __future__ import annotations
 
 from processor_playground.models import Module
-from processor_playground.templates import default_module, default_module_payload
+from processor_playground.templates import (
+    default_module,
+    default_module_payload,
+    new_module,
+    new_module_payload,
+)
 
 
 def test_default_module_payload_is_valid() -> None:
@@ -28,3 +33,24 @@ def test_default_module_payload_is_independent() -> None:
     a["nodes"].append({"id": "extra"})
     b = default_module_payload()
     assert all(n.get("id") != "extra" for n in b["nodes"])
+
+
+def test_new_module_payload_is_empty_skeleton() -> None:
+    payload = new_module_payload("m1", "My Module")
+    assert payload["module_id"] == "m1"
+    assert payload["name"] == "My Module"
+    assert payload["inputs"] == []
+    assert payload["outputs"] == []
+    assert payload["nodes"] == []
+    assert payload["edges"] == []
+    assert payload["flow"] == []
+    assert payload["submodules"] == []
+
+
+def test_new_module_returns_valid_module() -> None:
+    module = new_module("m2", "Another")
+    assert isinstance(module, Module)
+    assert module.module_id == "m2"
+    assert module.name == "Another"
+    assert module.inputs == []
+    assert module.outputs == []

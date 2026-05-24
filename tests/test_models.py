@@ -66,6 +66,24 @@ class TestDataType:
         original = DataType(type_id="Map", name="Map", kind="dict", element_type="int")
         assert DataType.from_dict(original.to_dict()) == original
 
+    def test_struct_payload_drops_stray_element_type(self) -> None:
+        # Backend owns the kind/fields invariant — see comment in DataType.from_dict.
+        result = DataType.from_dict({
+            "type_id": "S", "name": "S", "kind": "struct",
+            "fields": [{"name": "x", "type_ref": "int"}],
+            "element_type": "ignored",
+        })
+        assert result.element_type is None
+        assert [f.name for f in result.fields] == ["x"]
+
+    def test_array_payload_drops_stray_fields_and_defaults_element_type(self) -> None:
+        result = DataType.from_dict({
+            "type_id": "A", "name": "A", "kind": "array",
+            "fields": [{"name": "ghost", "type_ref": "int"}],
+        })
+        assert result.fields == []
+        assert result.element_type == "any"
+
 
 # ------------------------------------------------------------------- Module
 

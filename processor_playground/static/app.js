@@ -105,6 +105,11 @@ function App() {
   const [reactFlowInstance, setReactFlowInstance] = useState(null);
   const saveRef = useRef(() => {});
   const showStatusRef = useRef(null);
+  // Live mirror of currentModuleId so async callbacks (in-flight save
+  // responses, debounced timers) can tell whether the user has navigated
+  // away from the module they were originally working on.
+  const currentModuleIdRef = useRef(null);
+  useEffect(() => { currentModuleIdRef.current = currentModuleId; }, [currentModuleId]);
 
   // Derived from the server-owned catalog so a freshly dropped node gets the
   // same starter label every client agrees on.
@@ -183,6 +188,14 @@ function App() {
       submodules: currentModule.submodules || [],
     };
     const saved = await apiPut(`/api/modules/${currentModuleId}`, payload);
+    // The user may have switched modules while this PUT was in flight; if so,
+    // don't overwrite the now-active module's state with the response from a
+    // previous one (that's how the sidebar and header used to disagree about
+    // which module is open).
+    if (currentModuleIdRef.current !== saved.module_id) {
+      setModules((items) => items.map((item) => (item.module_id === saved.module_id ? saved : item)));
+      return;
+    }
     setCurrentModule(saved);
     setModules((items) => items.map((item) => (item.module_id === saved.module_id ? saved : item)));
     showStatus('Saved ✓');

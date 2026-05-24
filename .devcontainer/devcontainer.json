@@ -1,0 +1,26 @@
+{
+	"name": "Processor Playground",
+	"build": {
+		"context": "..",
+		"dockerfile": "../Dockerfile"
+	},
+	"workspaceFolder": "/workspaces/Processor",
+	"forwardPorts": [8000],
+	"portsAttributes": {
+		"8000": {
+			"label": "Processor Playground API",
+			"onAutoForward": "openBrowser"
+		}
+	},
+	"mounts": [
+		"source=processor-playground-storage,target=/workspaces/Processor/storage,type=volume"
+	],
+	"postCreateCommand": "pip install -e .[dev]",
+	"customizations": {
+		"vscode": {
+			"settings": {
+				"python.defaultInterpreterPath": "/usr/local/bin/python"
+			}
+		}
+	}
+}

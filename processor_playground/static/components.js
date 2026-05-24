@@ -447,8 +447,11 @@ export function DiagramCanvas({
 
 // ----------------------------------------------------------------- Sidebar
 
-export function RunPanel({ module, onRun, lastResult, running }) {
-  const inputs = module?.inputs ?? [];
+export function RunPanel({ module, liveInputs, onRun, lastResult, running }) {
+  // Prefer the live, canvas-derived list when present so the user can run a
+  // newly-added input signal immediately, without waiting for the auto-save
+  // to round-trip through the server.
+  const inputs = liveInputs && liveInputs.length ? liveInputs : (module?.inputs ?? []);
   const [signal, setSignal] = useState(inputs[0]?.name ?? '');
   const [valueText, setValueText] = useState('');
   const [error, setError] = useState(null);

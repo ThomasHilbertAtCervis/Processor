@@ -121,6 +121,24 @@ function App() {
     return map;
   }, [nodeKinds]);
 
+  // The module's external inputs are derived from the module_input nodes on
+  // the canvas, so the Run panel can offer freshly-added inputs immediately,
+  // before the next auto-save round-trips through the server.
+  const liveModuleInputs = useMemo(() => {
+    const out = [];
+    const seen = new Set();
+    for (const node of nodes) {
+      if (node.type !== 'module_input') continue;
+      const name = node.data && node.data.signal_name;
+      if (!name || seen.has(name)) continue;
+      seen.add(name);
+      const port = node.outputs && node.outputs[0];
+      const type_ref = (node.data && node.data.signal_type) || (port && port.type_ref) || 'any';
+      out.push({ name, type_ref });
+    }
+    return out;
+  }, [nodes]);
+
   const showStatus = useCallback((message, isErr = false) => {
     if (showStatusRef.current) {
       window.clearTimeout(showStatusRef.current);
@@ -469,7 +487,7 @@ function App() {
                 <button className="btn-save-manual" onClick=${() => saveCurrentDiagram().catch((error) => showStatus(`Save failed: ${error.message}`, true))}>💾 Save</button>
                 ${status ? html`<span className=${`status-badge${status.isErr ? ' error' : ''}`}>${status.msg}</span>` : null}
               </div>
-              <${RunPanel} module=${currentModule} onRun=${runModule} lastResult=${runResult} running=${running} />
+              <${RunPanel} module=${currentModule} liveInputs=${liveModuleInputs} onRun=${runModule} lastResult=${runResult} running=${running} />
               <${DiagramCanvas}
               key=${currentModule.module_id}
               currentModule=${currentModule}

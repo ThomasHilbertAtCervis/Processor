@@ -88,8 +88,15 @@ class DataTypePayload(BaseModel):
 
 
 class RunPayload(BaseModel):
-    input_data: dict[str, Any] = Field(default_factory=dict)
-    mocks: dict[str, Any] = Field(default_factory=dict)
+    """Trigger payload for ``POST /api/modules/{id}/run``.
+
+    Execution is always initiated through a *single* input signal — the
+    client picks which input to wake and supplies one value of the
+    matching data type.
+    """
+
+    input_signal: str = Field(min_length=1)
+    input_value: Any = None
 
 
 class ScriptPayload(BaseModel):
@@ -181,7 +188,11 @@ def run_module(
     module = modules.get(module_id)
     if not module:
         raise HTTPException(status_code=404, detail="Module not found")
-    return sim.run(module, input_data=payload.input_data, mocks=payload.mocks)
+    return sim.run(
+        module,
+        input_signal=payload.input_signal,
+        input_value=payload.input_value,
+    )
 
 
 @app.get("/api/data-types")

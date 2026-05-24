@@ -111,7 +111,8 @@ async def _drive(session: ClientSession) -> None:
     for v in [0, 4, 9, 10, 20, 100, 9.999, 10.0]:
         run = _decode(
             await session.call_tool(
-                "run_module", {"module_id": MODULE_ID, "input_data": {"value": v}}
+                "run_module",
+                {"module_id": MODULE_ID, "input_signal": "value", "input_value": v},
             )
         )
         print(f"input={v!r:>8}  outputs={run['outputs']}  status={run['status']}")

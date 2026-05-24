@@ -91,16 +91,16 @@ def create_mcp_server(
     @server.tool(name="run_module")
     def run_module(
         module_id: str,
-        input_data: dict[str, Any] | None = None,
-        mocks: dict[str, Any] | None = None,
+        input_signal: str,
+        input_value: Any = None,
     ) -> dict[str, Any]:
         module = modules.get(module_id)
         if not module:
             raise ValueError(f"Module not found: {module_id}")
         return sim.run(
             module,
-            input_data=input_data or {},
-            mocks=mocks or {},
+            input_signal=input_signal,
+            input_value=input_value,
         )
 
     @server.tool(name="list_data_types")

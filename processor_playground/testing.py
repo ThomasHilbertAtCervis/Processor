@@ -21,9 +21,11 @@ class ScriptTestRunner:
                 raise ValueError(f"Module '{module_id}' does not exist")
             return module
 
-        def run_module(module_id: str, input_data=None, mocks=None):
+        def run_module(module_id: str, input_signal: str, input_value=None):
             module = load_module(module_id)
-            return self.simulator.run(module, input_data=input_data, mocks=mocks)
+            return self.simulator.run(
+                module, input_signal=input_signal, input_value=input_value,
+            )
 
         def assert_equal(actual, expected, message: str = ""):
             report["assertions"] += 1

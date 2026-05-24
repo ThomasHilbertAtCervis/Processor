@@ -150,14 +150,16 @@ async def _drive(session: ClientSession) -> None:
     for sku in ["A", "B", "C"]:
         run = _decode(
             await session.call_tool(
-                "run_module", {"module_id": MODULE_ID, "input_data": {"sku": sku}}
+                "run_module",
+                {"module_id": MODULE_ID, "input_signal": "sku", "input_value": sku},
             )
         )
         print(f"sku={sku!r}  outputs={run['outputs']}  status={run['status']}")
 
     # Unknown SKU surfaces as a simulator error → script failure.
     err = await session.call_tool(
-        "run_module", {"module_id": MODULE_ID, "input_data": {"sku": "ZZZ"}}
+        "run_module",
+        {"module_id": MODULE_ID, "input_signal": "sku", "input_value": "ZZZ"},
     )
     print(
         "sku='ZZZ' (unknown) → isError=", err.isError,

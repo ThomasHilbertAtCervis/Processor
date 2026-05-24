@@ -108,7 +108,8 @@ def test_module_crud_and_run_via_mcp(tmp_path: Path) -> None:
 
         run_result = _decode_tool_result_payload(
             await session.call_tool(
-                "run_module", {"module_id": "m1", "input_data": {"in": 99}}
+                "run_module",
+                {"module_id": "m1", "input_signal": "in", "input_value": 99},
             )
         )
         assert run_result["outputs"] == {"out": [99]}
@@ -173,7 +174,7 @@ def test_data_types_catalogs_templates_and_script_test_via_mcp(tmp_path: Path) -
                 "run_script_test",
                 {
                     "script": (
-                        "result = run_module('t1', {'in': 7})\n"
+                        "result = run_module('t1', 'in', 7)\n"
                         "assert_equal(result['outputs']['out'][0], 7)\n"
                     )
                 },

@@ -394,6 +394,82 @@ export function DiagramCanvas({
 
 // ----------------------------------------------------------------- Sidebar
 
+export function RunPanel({ module, onRun, lastResult, running }) {
+  const inputs = module?.inputs ?? [];
+  const [signal, setSignal] = useState(inputs[0]?.name ?? '');
+  const [valueText, setValueText] = useState('');
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    if (!inputs.find((s) => s.name === signal)) {
+      setSignal(inputs[0]?.name ?? '');
+    }
+  }, [module?.module_id, inputs.map((s) => s.name).join('|')]);
+
+  const submit = async () => {
+    setError(null);
+    let value = null;
+    const trimmed = valueText.trim();
+    if (trimmed !== '') {
+      try {
+        value = JSON.parse(trimmed);
+      } catch (err) {
+        setError('Value must be valid JSON (e.g. 42, "abc", true, null, [1,2]).');
+        return;
+      }
+    }
+    if (!signal) {
+      setError('Pick an input signal.');
+      return;
+    }
+    await onRun(signal, value);
+  };
+
+  if (inputs.length === 0) {
+    return html`
+      <div className="run-panel">
+        <div className="run-panel-empty">No module inputs defined. Add one in the Signals panel to enable runs.</div>
+      </div>
+    `;
+  }
+
+  return html`
+    <div className="run-panel">
+      <div className="run-row">
+        <label>Input</label>
+        <select value=${signal} onChange=${(event) => setSignal(event.target.value)}>
+          ${inputs.map((sig) => html`<option key=${sig.name} value=${sig.name}>${sig.name} (${sig.type_ref})</option>`)}
+        </select>
+        <label>Value (JSON)</label>
+        <input
+          className="run-value"
+          placeholder='e.g. 42 or "hello"'
+          value=${valueText}
+          onInput=${(event) => setValueText(event.target.value)}
+          onKeyDown=${(event) => { if (event.key === 'Enter') submit(); }}
+        />
+        <button className="btn-run" disabled=${running} onClick=${submit}>${running ? 'Running…' : '▶ Run'}</button>
+      </div>
+      ${error ? html`<div className="run-error">${error}</div>` : null}
+      ${lastResult ? html`
+        <div className=${`run-result run-status-${lastResult.status}`}>
+          <div className="run-result-header">status: <strong>${lastResult.status}</strong></div>
+          <div className="run-result-section">
+            <div className="run-result-label">outputs</div>
+            <pre>${JSON.stringify(lastResult.outputs ?? {}, null, 2)}</pre>
+          </div>
+          ${lastResult.trace ? html`
+            <details>
+              <summary>trace (${lastResult.trace.length})</summary>
+              <pre>${JSON.stringify(lastResult.trace, null, 2)}</pre>
+            </details>
+          ` : null}
+        </div>
+      ` : null}
+    </div>
+  `;
+}
+
 export function Sidebar({
   modules,
   currentModuleId,

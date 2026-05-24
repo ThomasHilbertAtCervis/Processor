@@ -22,7 +22,7 @@ def test_default_module_payload_round_trips() -> None:
 def test_default_module_actually_runs_end_to_end() -> None:
     # The example module ships with an identity Python node — running it
     # exercises every executable node kind needed for the demo.
-    result = Simulator().run(default_module(), input_data={"input": "hello"})
+    result = Simulator().run(default_module(), input_signal="input", input_value="hello")
     assert result["outputs"] == {"result": ["hello"]}
 
 

@@ -154,10 +154,19 @@ for-each, …) are layered on top of this core in later iterations.
 
 ### 2.6 Simulation
 
-- The user can **run a module** with mock input data (`{signal_name:
-  value}`) and receive `{"outputs": {signal_name: [values…]}, "trace":
-  […], "status": "complete"}`. An output may be fired multiple times in
-  one run — the list preserves order.
+- **Execution is always initiated through a single input signal.** To
+  run a module the user picks one of the module's `inputs` and supplies
+  a single value for it; the simulator fires only that input port and
+  the run proceeds from there. There is no way to start a run by
+  injecting several inputs simultaneously — running with a second value
+  is a second, separate run.
+- The same single-input contract is exposed identically by the **UI**
+  (Run panel above the canvas), the **HTTP API**
+  (`POST /api/modules/{id}/run` with `{input_signal, input_value}`) and
+  the **MCP** tool (`run_module(module_id, input_signal, input_value)`).
+- A run returns `{"outputs": {signal_name: [values…]}, "trace": […],
+  "status": "complete"}`. An output may be fired multiple times in one
+  run — the list preserves order.
 - Execution is synchronous: firing a port walks every outgoing wire,
   activates the receiving node, and only returns once that activation
   (and any descendants) has completed.
@@ -179,7 +188,9 @@ for-each, …) are layered on top of this core in later iterations.
 The user can write Python test scripts (`/api/tests/run`) that:
 
 - load modules (`load_module(...)`),
-- run modules in isolation or composition (`run_module(...)`),
+- run modules in isolation or composition
+  (`run_module(module_id, input_signal, input_value)` — same
+  single-input contract as the UI/API/MCP),
 - mock interface dependencies (`mocks={"database": …}`),
 - assert against the resulting state (`assert_equal(...)`).
 
@@ -254,6 +265,7 @@ tracks status. Status uses ✅ done, 🚧 in progress, 📋 backlog,
 | F-018 | PR #1 comment 4528891051              | **All relevant business logic must execute in the backend.** The frontend is one of many clients (an MCP server is planned so other agents can drive the platform). The UI must never own domain catalogs, normalisation rules, or default-template shapes. | ✅ — moved node-kinds catalog, primitive types, new-module template, and DataType normalisation to the backend behind `/api/node-kinds`, `/api/data-types/primitives`, `POST /api/modules`. ARCHITECTURE.md §1 Goal 6 codifies the rule. |
 | F-019 | Owner direction, May 2026             | **Python steps must support `if`, `for`, and `foreach`** so non-trivial business logic (e.g. half-or-double) reads naturally instead of being expressed as a sequence of mini-steps. | ✅ — `SafeScriptInterpreter` allow-lists `If` and `For`; covered by tests. |
 | F-020 | Owner direction, May 2026             | **Data-flow execution model.** Data flows along wires; there is no direct variable access. A node only ever receives values on its inputs and fires values on its outputs. Firing an output may suspend the node until a paired response arrives (request/response). Single path of execution, generator-style ergonomics for Python nodes. | ✅ — storage format bumped to v2, v1 files rejected on load; simulator rebuilt around frames + request/response handshake; demo `scripts/build_half_or_double.py` rewritten as `module_input → python (if/else) → module_output`. |
+| F-021 | Owner direction, May 2026             | **Single-input execution contract.** *"Execution of any node or flow is always initiated through a single input. So for execution, we need to first select an input, then specify its value (based on its data type) and then start the execution. This should be possible through UI, Api and MCP."* | ✅ — `Simulator.run(module, *, input_signal, input_value)`; `POST /api/modules/{id}/run` takes `{input_signal, input_value}`; MCP `run_module(module_id, input_signal, input_value)`; UI Run panel above the canvas lets the user pick an input signal, enter a JSON value, and execute. |
 
 ### Cross-cutting / always-on requirements
 

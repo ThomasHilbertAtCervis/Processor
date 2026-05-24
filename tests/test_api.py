@@ -175,7 +175,7 @@ class TestRunEndpoint:
         client.put("/api/modules/m", json=_echo_module_payload("m"))
         response = client.post(
             "/api/modules/m/run",
-            json={"input_data": {"in": 42}, "mocks": {}},
+            json={"input_signal": "in", "input_value": 42},
         )
         assert response.status_code == 200
         body = response.json()
@@ -184,7 +184,8 @@ class TestRunEndpoint:
 
     def test_run_missing_is_404(self, client: TestClient) -> None:
         assert client.post(
-            "/api/modules/missing/run", json={"input_data": {}, "mocks": {}}
+            "/api/modules/missing/run",
+            json={"input_signal": "in", "input_value": None},
         ).status_code == 404
 
 
@@ -197,7 +198,7 @@ class TestScriptEndpoint:
             "/api/tests/run",
             json={
                 "script": (
-                    "result = run_module('m', {'in': 9})\n"
+                    "result = run_module('m', 'in', 9)\n"
                     "assert_equal(result['outputs']['out'][0], 9)\n"
                 )
             },

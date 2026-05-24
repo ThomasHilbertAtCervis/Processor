@@ -89,16 +89,21 @@ class Simulator:
     def run(
         self,
         module: Module,
-        input_data: dict[str, Any] | None = None,
-        mocks: dict[str, Any] | None = None,  # accepted for API compat, unused
+        *,
+        input_signal: str,
+        input_value: Any,
     ) -> dict[str, Any]:
-        """Run ``module``, feeding each ``input_data[signal_name]`` into the
-        module's matching ``module_input`` node.
+        """Run ``module`` by firing a single value into one of its inputs.
+
+        Execution is always initiated through **one** input signal: pick
+        which ``module_input`` to wake up, supply the value it carries,
+        and the simulator walks the wires from there. Multiple inputs are
+        not delivered in one call — if you need that, run the module
+        twice.
 
         Returns ``{ "outputs": {signal: [values]}, "trace": [...],
         "status": "complete" }``.
         """
-        del mocks  # kept in the signature for backward HTTP/MCP compat
         result = _RunResult(outputs={sig.name: [] for sig in module.outputs})
 
         def record_top_level_output(signal_name: str, value: Any) -> None:
@@ -117,8 +122,7 @@ class Simulator:
         self._waiting: dict[int, _PythonActivation] = {}
 
         frame = self._make_frame(module, record_top_level_output)
-        for signal_name, value in (input_data or {}).items():
-            self._fire_module_input(frame, signal_name, value)
+        self._fire_module_input(frame, input_signal, input_value)
 
         return {
             "outputs": result.outputs,

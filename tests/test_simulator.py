@@ -91,7 +91,7 @@ class TestModuleIO:
             nodes=[_input("i", "in"), _output("o", "out")],
             edges=[_wire("e", "i", "value", "o", "value")],
         )
-        result = Simulator().run(module, input_data={"in": 42})
+        result = Simulator().run(module, input_signal="in", input_value=42)
         assert result["outputs"] == {"out": [42]}
         assert result["status"] == "complete"
 
@@ -101,7 +101,7 @@ class TestModuleIO:
             nodes=[_input("i", "in"), _output("o", "out")],
             edges=[],
         )
-        result = Simulator().run(module, input_data={"in": 1})
+        result = Simulator().run(module, input_signal="in", input_value=1)
         assert result["outputs"] == {"out": []}
 
     def test_missing_input_node_raises(self) -> None:
@@ -110,7 +110,7 @@ class TestModuleIO:
             nodes=[], edges=[],
         )
         with pytest.raises(SimulatorError, match="No module_input node"):
-            Simulator().run(module, input_data={"in": 1})
+            Simulator().run(module, input_signal="in", input_value=1)
 
 
 # --------------------------------------------------------------- python node
@@ -133,7 +133,7 @@ class TestPythonNode:
                 _wire("e2", "p", "out", "o", "value"),
             ],
         )
-        result = Simulator().run(module, input_data={"v": 7})
+        result = Simulator().run(module, input_signal="v", input_value=7)
         assert result["outputs"] == {"r": [14]}
 
     def test_python_node_if_else_branching(self) -> None:
@@ -155,8 +155,8 @@ class TestPythonNode:
                 _wire("e2", "p", "y", "o", "value"),
             ],
         )
-        assert Simulator().run(module, input_data={"x": 4})["outputs"]["y"] == [8]
-        assert Simulator().run(module, input_data={"x": 20})["outputs"]["y"] == [10]
+        assert Simulator().run(module, input_signal="x", input_value=4)["outputs"]["y"] == [8]
+        assert Simulator().run(module, input_signal="x", input_value=20)["outputs"]["y"] == [10]
 
     def test_python_node_for_loop_emits_per_iteration(self) -> None:
         code = (
@@ -175,7 +175,7 @@ class TestPythonNode:
                 _wire("e2", "p", "each", "o", "value"),
             ],
         )
-        result = Simulator().run(module, input_data={"items": [1, 2, 3]})
+        result = Simulator().run(module, input_signal="items", input_value=[1, 2, 3])
         assert result["outputs"]["each"] == [1, 2, 3]
 
     def test_python_node_current_input_tracks_trigger_port(self) -> None:
@@ -198,9 +198,12 @@ class TestPythonNode:
                 _wire("e3", "p", "tag", "o", "value"),
             ],
         )
-        result = Simulator().run(module, input_data={"a": 1, "b": 2})
-        # Each input fires its own activation; current_input reflects each in turn.
-        assert result["outputs"]["tag"] == ["a", "b"]
+        result_a = Simulator().run(module, input_signal="a", input_value=1)
+        result_b = Simulator().run(module, input_signal="b", input_value=2)
+        # Each run is initiated through one input; current_input reflects
+        # the port that was woken.
+        assert result_a["outputs"]["tag"] == ["a"]
+        assert result_b["outputs"]["tag"] == ["b"]
 
     def test_python_node_undeclared_output_port_raises(self) -> None:
         module = _mod(
@@ -213,7 +216,7 @@ class TestPythonNode:
             edges=[_wire("e", "i", "value", "p", "v")],
         )
         with pytest.raises(SimulatorError, match="undeclared output port 'ghost'"):
-            Simulator().run(module, input_data={"v": 1})
+            Simulator().run(module, input_signal="v", input_value=1)
 
 
 # ----------------------------------------------------------- request/response
@@ -255,7 +258,7 @@ class TestRequestResponse:
                 _wire("e4", "caller", "result", "out", "value"),
             ],
         )
-        result = Simulator().run(module, input_data={"key": "hi"})
+        result = Simulator().run(module, input_signal="key", input_value="hi")
         assert result["outputs"]["result"] == [4]  # len("hi") * 2
 
     def test_request_without_response_raises(self) -> None:
@@ -273,7 +276,7 @@ class TestRequestResponse:
             edges=[_wire("e1", "i", "value", "caller", "k")],
         )
         with pytest.raises(SimulatorError, match="no value was delivered"):
-            Simulator().run(module, input_data={"k": "x"})
+            Simulator().run(module, input_signal="k", input_value="x")
 
     def test_request_without_pair_raises(self) -> None:
         module = _mod(
@@ -289,7 +292,7 @@ class TestRequestResponse:
             edges=[_wire("e1", "i", "value", "caller", "k")],
         )
         with pytest.raises(SimulatorError, match="has no 'pair' set"):
-            Simulator().run(module, input_data={"k": "x"})
+            Simulator().run(module, input_signal="k", input_value="x")
 
 
 # --------------------------------------------------------------- submodules
@@ -328,7 +331,7 @@ class TestSubmodules:
             ],
             submodules=[child],
         )
-        result = Simulator().run(parent, input_data={"n": 10})
+        result = Simulator().run(parent, input_signal="n", input_value=10)
         assert result["outputs"] == {"r": [11]}
 
     def test_unknown_submodule_raises(self) -> None:
@@ -345,7 +348,7 @@ class TestSubmodules:
             edges=[_wire("e1", "i", "value", "sub", "inp")],
         )
         with pytest.raises(SimulatorError, match="Submodule 'ghost' not found"):
-            Simulator().run(parent, input_data={"n": 1})
+            Simulator().run(parent, input_signal="n", input_value=1)
 
 
 # -------------------------------------------------------------------- errors
@@ -362,7 +365,7 @@ class TestErrorPaths:
             edges=[_wire("e1", "i", "value", "x", "v")],
         )
         with pytest.raises(SimulatorError, match="Unknown node type 'totally-made-up'"):
-            Simulator().run(module, input_data={"v": 1})
+            Simulator().run(module, input_signal="v", input_value=1)
 
     def test_module_input_as_edge_target_raises(self) -> None:
         # Wiring something INTO a module_input is invalid; it's a source-only node.
@@ -377,4 +380,4 @@ class TestErrorPaths:
                    _wire("e2", "p", "o", "ia", "value")],  # bad: back into input
         )
         with pytest.raises(SimulatorError, match="source-only node"):
-            Simulator().run(module, input_data={"a": 1})
+            Simulator().run(module, input_signal="a", input_value=1)

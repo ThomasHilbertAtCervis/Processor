@@ -17,6 +17,7 @@ import { apiGet, apiPut, apiPost, apiDelete } from './lib/api.js';
 import {
   EDGE_MARKER,
   PropertiesPanel,
+  RunPanel,
   Sidebar,
   DiagramCanvas,
 } from './components.js';
@@ -33,6 +34,8 @@ function App() {
   const [selected, setSelected] = useState(null);
   const [activeTab, setActiveTab] = useState('modules');
   const [status, setStatus] = useState(null);
+  const [runResult, setRunResult] = useState(null);
+  const [running, setRunning] = useState(false);
   const reactFlowWrapper = useRef(null);
   const [reactFlowInstance, setReactFlowInstance] = useState(null);
   const saveRef = useRef(() => {});
@@ -300,6 +303,30 @@ function App() {
     }
   }, [showStatus]);
 
+  const runModule = useCallback(async (inputSignal, inputValue) => {
+    if (!currentModuleId) {
+      return;
+    }
+    setRunning(true);
+    try {
+      const result = await apiPost(`/api/modules/${currentModuleId}/run`, {
+        input_signal: inputSignal,
+        input_value: inputValue,
+      });
+      setRunResult(result);
+      showStatus(`Run ${result.status}`);
+    } catch (error) {
+      setRunResult({ status: 'error', outputs: {}, error: error.message });
+      showStatus(`Run failed: ${error.message}`, true);
+    } finally {
+      setRunning(false);
+    }
+  }, [currentModuleId, showStatus]);
+
+  useEffect(() => {
+    setRunResult(null);
+  }, [currentModuleId]);
+
   return html`
     <div id="app">
       <${Sidebar}
@@ -326,6 +353,7 @@ function App() {
                 <button className="btn-save-manual" onClick=${() => saveCurrentDiagram().catch((error) => showStatus(`Save failed: ${error.message}`, true))}>💾 Save</button>
                 ${status ? html`<span className=${`status-badge${status.isErr ? ' error' : ''}`}>${status.msg}</span>` : null}
               </div>
+              <${RunPanel} module=${currentModule} onRun=${runModule} lastResult=${runResult} running=${running} />
               <${DiagramCanvas}
               key=${currentModule.module_id}
               currentModule=${currentModule}

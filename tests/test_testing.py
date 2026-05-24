@@ -39,7 +39,7 @@ def runner(tmp_path: Path) -> ScriptTestRunner:
 class TestScriptTestRunner:
     def test_passing_script(self, runner: ScriptTestRunner) -> None:
         report = runner.run(
-            "result = run_module('m1', {'in': 7})\n"
+            "result = run_module('m1', 'in', 7)\n"
             "assert_equal(result['outputs']['out'][0], 7)\n"
         )
         assert report == {"assertions": 1, "status": "passed", "errors": []}
@@ -60,7 +60,7 @@ class TestScriptTestRunner:
         assert report["assertions"] == 1
 
     def test_unknown_module_reference(self, runner: ScriptTestRunner) -> None:
-        report = runner.run("result = run_module('does-not-exist', {})")
+        report = runner.run("result = run_module('does-not-exist', 'in', 0)")
         assert report["status"] == "failed"
         assert "does-not-exist" in report["errors"][0]
 
@@ -79,7 +79,7 @@ class TestScriptTestRunner:
 
     def test_builtins_available(self, runner: ScriptTestRunner) -> None:
         report = runner.run(
-            "result = run_module('m1', {'in': 'abc'})\n"
+            "result = run_module('m1', 'in', 'abc')\n"
             "assert_equal(len(result['outputs']['out']), 1)\n"
         )
         assert report["status"] == "passed"

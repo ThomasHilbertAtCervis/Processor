@@ -103,7 +103,6 @@ function App() {
       edges,
       inputs: currentModule.inputs || [],
       outputs: currentModule.outputs || [],
-      flow: currentModule.flow || [],
       submodules: currentModule.submodules || [],
     };
     const saved = await apiPut(`/api/modules/${currentModuleId}`, payload);

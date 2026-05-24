@@ -151,15 +151,24 @@ class Node:
     inputs: list[Port] = field(default_factory=list)
     outputs: list[Port] = field(default_factory=list)
     data: dict[str, Any] = field(default_factory=dict)
+    # Canvas coordinates (consumed by the ReactFlow editor). The simulator
+    # ignores them; they round-trip so a hand-arranged diagram stays put.
+    position: dict[str, float] = field(default_factory=lambda: {"x": 0.0, "y": 0.0})
 
     @staticmethod
     def from_dict(payload: dict[str, Any]) -> "Node":
+        raw_pos = payload.get("position") or {}
+        position = {
+            "x": float(raw_pos.get("x", 0.0)),
+            "y": float(raw_pos.get("y", 0.0)),
+        }
         return Node(
             id=payload["id"],
             type=payload["type"],
             inputs=[Port.from_dict(p) for p in payload.get("inputs", [])],
             outputs=[Port.from_dict(p) for p in payload.get("outputs", [])],
             data=dict(payload.get("data", {})),
+            position=position,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -169,6 +178,7 @@ class Node:
             "inputs": [p.to_dict() for p in self.inputs],
             "outputs": [p.to_dict() for p in self.outputs],
             "data": self.data,
+            "position": dict(self.position),
         }
 
 

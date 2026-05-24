@@ -59,6 +59,7 @@ MODULE_PAYLOAD: dict[str, Any] = {
             "inputs": [],
             "outputs": [{"name": "v", "type_ref": "string"}],
             "data": {"signal_name": "sku"},
+            "position": {"x": 60, "y": 200},
         },
         {
             "id": "caller",
@@ -76,6 +77,7 @@ MODULE_PAYLOAD: dict[str, Any] = {
                 {"name": "total", "type_ref": "decimal"},
             ],
             "data": {"code": CALLER_CODE},
+            "position": {"x": 320, "y": 200},
         },
         {
             "id": "store",
@@ -83,6 +85,7 @@ MODULE_PAYLOAD: dict[str, Any] = {
             "inputs": [{"name": "query", "type_ref": "string"}],
             "outputs": [{"name": "answer", "type_ref": "decimal"}],
             "data": {"code": STORE_CODE},
+            "position": {"x": 620, "y": 60},
         },
         {
             "id": "out-total",
@@ -90,6 +93,7 @@ MODULE_PAYLOAD: dict[str, Any] = {
             "inputs": [{"name": "v", "type_ref": "decimal"}],
             "outputs": [],
             "data": {"signal_name": "total"},
+            "position": {"x": 620, "y": 340},
         },
     ],
     "edges": [

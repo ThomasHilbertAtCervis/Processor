@@ -97,9 +97,18 @@ class TestNode:
             inputs=[Port("value", "int")],
             outputs=[Port("doubled", "int")],
             data={"code": "outputs['doubled'] = inputs['value'] * 2"},
+            position={"x": 120.0, "y": -40.0},
         )
         restored = Node.from_dict(node.to_dict())
         assert restored == node
+
+    def test_position_defaults_to_origin_when_missing(self) -> None:
+        # Older payloads (and demo scripts that don't bother laying out the
+        # canvas) omit ``position``; the model fills in (0, 0) so ReactFlow
+        # doesn't crash on first paint.
+        node = Node.from_dict({"id": "n", "type": "python"})
+        assert node.position == {"x": 0.0, "y": 0.0}
+        assert node.to_dict()["position"] == {"x": 0.0, "y": 0.0}
 
 
 class TestEdge:

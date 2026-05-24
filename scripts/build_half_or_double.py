@@ -42,6 +42,7 @@ MODULE_PAYLOAD: dict[str, Any] = {
             "inputs": [],
             "outputs": [{"name": "v", "type_ref": "decimal"}],
             "data": {"signal_name": "value"},
+            "position": {"x": 80, "y": 160},
         },
         {
             "id": "logic",
@@ -49,6 +50,7 @@ MODULE_PAYLOAD: dict[str, Any] = {
             "inputs": [{"name": "value", "type_ref": "decimal"}],
             "outputs": [{"name": "result", "type_ref": "decimal"}],
             "data": {"code": LOGIC_CODE},
+            "position": {"x": 360, "y": 160},
         },
         {
             "id": "out-result",
@@ -56,6 +58,7 @@ MODULE_PAYLOAD: dict[str, Any] = {
             "inputs": [{"name": "v", "type_ref": "decimal"}],
             "outputs": [],
             "data": {"signal_name": "result"},
+            "position": {"x": 640, "y": 160},
         },
     ],
     "edges": [

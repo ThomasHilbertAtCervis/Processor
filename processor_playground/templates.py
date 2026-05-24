@@ -29,6 +29,7 @@ def default_module_payload() -> dict[str, Any]:
                 "inputs": [],
                 "outputs": [{"name": "value", "type_ref": "any", "kind": "data"}],
                 "data": {"signal_name": "input", "label": "input"},
+                "position": {"x": 80, "y": 160},
             },
             {
                 "id": "logic-1",
@@ -39,6 +40,7 @@ def default_module_payload() -> dict[str, Any]:
                     "label": "Identity",
                     "code": "outputs['result'] = inputs['value']\n",
                 },
+                "position": {"x": 360, "y": 160},
             },
             {
                 "id": "output-1",
@@ -46,6 +48,7 @@ def default_module_payload() -> dict[str, Any]:
                 "inputs": [{"name": "value", "type_ref": "any", "kind": "data"}],
                 "outputs": [],
                 "data": {"signal_name": "result", "label": "result"},
+                "position": {"x": 640, "y": 160},
             },
         ],
         "edges": [

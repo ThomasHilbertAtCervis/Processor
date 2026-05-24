@@ -568,3 +568,40 @@ button {
   word-break: break-word;
 }
 .run-result details summary { cursor: pointer; color: #8a93a3; font-size: 12px; }
+
+/* Python node script editor */
+.prop-row-code { display: flex; flex-direction: column; gap: 4px; }
+.prop-code {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  background: #0f131a;
+  color: #e6e8ec;
+  border: 1px solid #2a2f3a;
+  border-radius: 4px;
+  padding: 8px;
+  resize: vertical;
+  tab-size: 4;
+  white-space: pre;
+}
+.prop-code:focus { outline: 1px solid #2563eb; border-color: #2563eb; }
+.prop-hint { color: #8a93a3; font-size: 11px; line-height: 1.4; }
+.prop-hint code {
+  background: #0f131a;
+  border: 1px solid #2a2f3a;
+  border-radius: 3px;
+  padding: 0 4px;
+  font-size: 11px;
+}
+.prop-portlist { display: flex; flex-wrap: wrap; gap: 4px; }
+.prop-port {
+  background: #0f131a;
+  border: 1px solid #2a2f3a;
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-size: 11px;
+  color: #e6e8ec;
+}
+.prop-portlist-empty { color: #8a93a3; font-size: 12px; font-style: italic; }

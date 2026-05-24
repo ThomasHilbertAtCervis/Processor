@@ -92,6 +92,55 @@ export function PropertiesPanel({ selected, nodes, edges, onUpdateNode, onUpdate
               />
             </div>
           `}
+          ${nodeType === 'python' && html`
+            <div className="prop-row">
+              <label>Input ports</label>
+              <div className="prop-portlist">
+                ${(item.inputs || []).length === 0
+                  ? html`<span className="prop-portlist-empty">(none)</span>`
+                  : (item.inputs || []).map((port) => html`
+                      <code key=${port.name} className="prop-port">inputs['${port.name}']</code>
+                    `)}
+              </div>
+            </div>
+            <div className="prop-row">
+              <label>Output ports</label>
+              <div className="prop-portlist">
+                ${(item.outputs || []).length === 0
+                  ? html`<span className="prop-portlist-empty">(none)</span>`
+                  : (item.outputs || []).map((port) => html`
+                      <code key=${port.name} className="prop-port">outputs['${port.name}']</code>
+                    `)}
+              </div>
+            </div>
+            <div className="prop-row prop-row-code">
+              <label>Python script</label>
+              <textarea
+                className="prop-code"
+                spellCheck=${false}
+                rows="14"
+                value=${localData.code || ''}
+                placeholder="outputs['result'] = inputs['value']"
+                onInput=${(event) => setField('code', event.target.value)}
+                onKeyDown=${(event) => {
+                  if (event.key === 'Tab') {
+                    event.preventDefault();
+                    const ta = event.target;
+                    const start = ta.selectionStart;
+                    const end = ta.selectionEnd;
+                    const next = ta.value.slice(0, start) + '    ' + ta.value.slice(end);
+                    setField('code', next);
+                    requestAnimationFrame(() => { ta.selectionStart = ta.selectionEnd = start + 4; });
+                  }
+                }}
+              />
+              <div className="prop-hint">
+                Reads <code>inputs['port']</code>, writes <code>outputs['port'] = value</code>.
+                Sandboxed: <code>if</code>, <code>for</code>, arithmetic,
+                <code> len/range/min/max/sum</code>. No imports, no attribute access.
+              </div>
+            </div>
+          `}
           ${nodeType === 'submodule' && html`
             <div className="prop-row">
               <label>Sub-module</label>

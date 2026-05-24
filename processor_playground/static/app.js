@@ -22,6 +22,27 @@ import {
   DiagramCanvas,
 } from './components.js';
 
+// React Flow only passes `data` to custom node components, so we mirror the
+// v2 port arrays into data._ports for the renderer. dehydrate strips them
+// before persisting so the wire model stays single-sourced.
+function hydrateNodeForFlow(node) {
+  return {
+    ...node,
+    data: {
+      ...(node.data || {}),
+      _ports: {
+        inputs: node.inputs || [],
+        outputs: node.outputs || [],
+      },
+    },
+  };
+}
+
+function dehydrateNodeForWire(node) {
+  const { _ports, ...restData } = node.data || {};
+  return { ...node, data: restData };
+}
+
 function App() {
   const [modules, setModules] = useState([]);
   const [dataTypes, setDataTypes] = useState([]);
@@ -75,7 +96,7 @@ function App() {
     const modulePayload = await apiGet(`/api/modules/${moduleId}`);
     setCurrentModuleId(moduleId);
     setCurrentModule(modulePayload);
-    setNodes(modulePayload.nodes || []);
+    setNodes((modulePayload.nodes || []).map(hydrateNodeForFlow));
     setEdges(modulePayload.edges || []);
     setSelected(null);
     return modulePayload;
@@ -102,7 +123,7 @@ function App() {
     }
     const payload = {
       ...currentModule,
-      nodes,
+      nodes: nodes.map(dehydrateNodeForWire),
       edges,
       inputs: currentModule.inputs || [],
       outputs: currentModule.outputs || [],
@@ -357,7 +378,7 @@ function App() {
               <${DiagramCanvas}
               key=${currentModule.module_id}
               currentModule=${currentModule}
-              nodes=${nodes.map((node) => ({ ...node, type: node.type || 'condition' }))}
+              nodes=${nodes.map((node) => ({ ...node, type: node.type || 'python' }))}
               edges=${edges}
               onNodesChange=${onNodesChange}
               onEdgesChange=${onEdgesChange}

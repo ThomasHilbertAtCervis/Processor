@@ -605,3 +605,137 @@ button {
   color: #e6e8ec;
 }
 .prop-portlist-empty { color: #8a93a3; font-size: 12px; font-style: italic; }
+
+/* -------------------------------------------------- v2 node visuals */
+
+/* Sub-module — boxed container with title bar and per-port rows that
+   align with handles on the left/right boundary, mirroring the
+   reference diagram in docs/images/berlin-warehouse-reference.png. */
+.node-submodule {
+  min-width: 220px;
+  background: #fff;
+  border: 1.5px solid #333;
+  border-radius: 6px;
+  padding: 0;
+  color: #1f2430;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+.node-submodule-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid #d9dee7;
+  background: #f7f8fb;
+  border-radius: 6px 6px 0 0;
+  font-size: 12px;
+}
+.node-submodule-name { font-weight: 700; color: #1f2430; }
+.node-submodule-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: 1px solid #888;
+  border-radius: 3px;
+  font-size: 11px;
+  color: #555;
+  background: #fff;
+}
+.node-submodule-body {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  padding: 8px 0;
+}
+.node-submodule-col {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.node-submodule-col-in { align-items: flex-start; }
+.node-submodule-col-out { align-items: flex-end; }
+
+.node-port {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  background: #fff;
+  border: 1px solid #333;
+  border-radius: 10px;
+  font-size: 11px;
+  color: #1f2430;
+  white-space: nowrap;
+}
+.node-port-in {
+  padding-left: 14px;     /* leaves room for the handle dot at the boundary */
+  margin-left: -8px;      /* overlap the container border like the reference */
+}
+.node-port-out {
+  padding-right: 14px;
+  margin-right: -8px;
+}
+.node-port-label { font-weight: 600; }
+.node-port-type { color: #6b7385; font-weight: 400; }
+.node-port-handle {
+  width: 9px !important;
+  height: 9px !important;
+  background: #2f6fed !important;
+  border: 2px solid #fff !important;
+}
+
+/* Python node — slim version of the submodule box. */
+.node-python {
+  min-width: 200px;
+  background: #fff;
+  border: 1.5px solid #333;
+  border-radius: 6px;
+}
+.node-python-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-bottom: 1px solid #d9dee7;
+  background: #eef3ff;
+  border-radius: 6px 6px 0 0;
+  font-size: 12px;
+}
+.node-python-icon {
+  font-family: ui-monospace, monospace;
+  font-weight: 700;
+  color: #2f6fed;
+}
+.node-python-name { font-weight: 700; }
+.node-python-body {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 6px 0;
+}
+
+/* Module input / output — chevron-shaped source/sink. */
+.node-module-input,
+.node-module-output {
+  min-width: 110px;
+  padding: 8px 18px;
+  background: #fff;
+  border: 1.5px solid #333;
+  color: #1f2430;
+  font-weight: 600;
+  font-size: 12px;
+  text-align: center;
+}
+.node-module-input {
+  clip-path: polygon(0 0, 85% 0, 100% 50%, 85% 100%, 0 100%);
+  border-radius: 4px 0 0 4px;
+}
+.node-module-output {
+  clip-path: polygon(15% 0, 100% 0, 100% 100%, 15% 100%, 0 50%);
+  border-radius: 0 4px 4px 0;
+}
+.node-module-io-label { white-space: nowrap; }

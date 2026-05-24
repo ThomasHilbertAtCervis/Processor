@@ -681,11 +681,34 @@ button {
 }
 .node-port-label { font-weight: 600; }
 .node-port-type { color: #6b7385; font-weight: 400; }
+/* Handles inside a port chip: pin to the chip's outer edge, give them a
+   generous transparent hit area, and keep the visible dot square so the
+   user can see exactly where a wire will start / end. */
 .node-port-handle {
-  width: 9px !important;
-  height: 9px !important;
+  width: 14px !important;
+  height: 14px !important;
+  border-radius: 3px !important;
   background: #2f6fed !important;
   border: 2px solid #fff !important;
+  box-shadow: 0 0 0 1px #2f6fed;
+  top: 50% !important;
+  z-index: 5;
+  cursor: crosshair !important;
+  pointer-events: all !important;
+}
+.node-port-in .node-port-handle {
+  left: 0 !important;
+  right: auto !important;
+  transform: translate(-50%, -50%) !important;
+}
+.node-port-out .node-port-handle {
+  right: 0 !important;
+  left: auto !important;
+  transform: translate(50%, -50%) !important;
+}
+.node-port-handle:hover {
+  background: #ffb020 !important;
+  box-shadow: 0 0 0 1px #ffb020;
 }
 
 /* Python node — slim version of the submodule box. */

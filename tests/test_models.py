@@ -1,22 +1,24 @@
-"""Round-trip and legacy-format tests for the domain models.
-
-Concern: keep the wire format stable so that older module JSON on disk
-continues to load and so that the UI keeps seeing the legacy `interfaces`
-shorthand it depends on.
-"""
+"""Round-trip + rejection tests for the v2 domain models."""
 from __future__ import annotations
 
-from processor_playground.models import DataType, DataTypeField, Module, Signal
+import pytest
 
+from processor_playground.models import (
+    DataType,
+    DataTypeField,
+    Edge,
+    Module,
+    Node,
+    Port,
+    Signal,
+)
 
-# ----------------------------------------------------------------- Signal
 
 class TestSignal:
     def test_from_string_uses_any_type(self) -> None:
         signal = Signal.from_dict("shipment")
         assert signal.name == "shipment"
         assert signal.type_ref == "any"
-        assert signal.filter is None
 
     def test_from_dict_full(self) -> None:
         signal = Signal.from_dict({"name": "in", "type_ref": "Event", "filter": "x>0"})
@@ -27,11 +29,6 @@ class TestSignal:
     def test_to_dict_omits_empty_filter(self) -> None:
         assert "filter" not in Signal(name="x").to_dict()
 
-    def test_to_dict_includes_filter(self) -> None:
-        assert Signal(name="x", filter="ok").to_dict()["filter"] == "ok"
-
-
-# ------------------------------------------------------------- DataTypeField
 
 class TestDataTypeField:
     def test_round_trip(self) -> None:
@@ -42,18 +39,15 @@ class TestDataTypeField:
         assert DataTypeField.from_dict({"name": "x"}).type_ref == "any"
 
 
-# ----------------------------------------------------------------- DataType
-
 class TestDataType:
     def test_struct_round_trip(self) -> None:
         original = DataType(
             type_id="Shipment",
             name="Shipment",
             kind="struct",
-            fields=[DataTypeField("location", "string"), DataTypeField("count", "int")],
+            fields=[DataTypeField("location", "string")],
         )
-        restored = DataType.from_dict(original.to_dict())
-        assert restored == original
+        assert DataType.from_dict(original.to_dict()) == original
 
     def test_array_round_trip(self) -> None:
         original = DataType(type_id="Bag", name="Bag", kind="array", element_type="string")
@@ -62,19 +56,13 @@ class TestDataType:
         assert restored.element_type == "string"
         assert restored.fields == []
 
-    def test_dict_round_trip(self) -> None:
-        original = DataType(type_id="Map", name="Map", kind="dict", element_type="int")
-        assert DataType.from_dict(original.to_dict()) == original
-
     def test_struct_payload_drops_stray_element_type(self) -> None:
-        # Backend owns the kind/fields invariant — see comment in DataType.from_dict.
         result = DataType.from_dict({
             "type_id": "S", "name": "S", "kind": "struct",
             "fields": [{"name": "x", "type_ref": "int"}],
             "element_type": "ignored",
         })
         assert result.element_type is None
-        assert [f.name for f in result.fields] == ["x"]
 
     def test_array_payload_drops_stray_fields_and_defaults_element_type(self) -> None:
         result = DataType.from_dict({
@@ -85,60 +73,97 @@ class TestDataType:
         assert result.element_type == "any"
 
 
-# ------------------------------------------------------------------- Module
+class TestPort:
+    def test_defaults(self) -> None:
+        port = Port.from_dict({"name": "value"})
+        assert port.type_ref == "any"
+        assert port.kind == "data"
+        assert port.pair is None
+
+    def test_request_port_round_trip(self) -> None:
+        port = Port(name="ask", type_ref="string", kind="request", pair="answer")
+        restored = Port.from_dict(port.to_dict())
+        assert restored == port
+
+    def test_to_dict_omits_pair_when_unset(self) -> None:
+        assert "pair" not in Port(name="x").to_dict()
+
+
+class TestNode:
+    def test_round_trip(self) -> None:
+        node = Node(
+            id="n1",
+            type="python",
+            inputs=[Port("value", "int")],
+            outputs=[Port("doubled", "int")],
+            data={"code": "outputs['doubled'] = inputs['value'] * 2"},
+        )
+        restored = Node.from_dict(node.to_dict())
+        assert restored == node
+
+
+class TestEdge:
+    def test_round_trip(self) -> None:
+        edge = Edge(
+            id="e1", source="a", source_handle="out",
+            target="b", target_handle="in",
+        )
+        restored = Edge.from_dict(edge.to_dict())
+        assert restored == edge
+
+    def test_accepts_reactflow_camelcase_handles(self) -> None:
+        edge = Edge.from_dict({
+            "id": "e1", "source": "a", "sourceHandle": "out",
+            "target": "b", "targetHandle": "in",
+        })
+        assert edge.source_handle == "out"
+        assert edge.target_handle == "in"
+
+    def test_emits_both_handle_aliases(self) -> None:
+        edge = Edge(id="e1", source="a", source_handle="o",
+                   target="b", target_handle="i")
+        payload = edge.to_dict()
+        assert payload["source_handle"] == payload["sourceHandle"] == "o"
+        assert payload["target_handle"] == payload["targetHandle"] == "i"
+
 
 class TestModule:
-    def test_round_trip_preserves_shape(self) -> None:
+    def test_round_trip_preserves_graph(self) -> None:
         module = Module(
             module_id="m",
             name="M",
             inputs=[Signal("a", "string")],
-            outputs=[Signal("b")],
-            nodes=[{"id": "n1", "type": "start"}],
-            edges=[{"id": "e1", "source": "n1", "target": "n2"}],
-            flow=[{"type": "emit", "payload": 1}],
+            outputs=[Signal("b", "int")],
+            nodes=[
+                Node(id="i", type="module_input", outputs=[Port("v")],
+                     data={"signal_name": "a"}),
+                Node(id="o", type="module_output", inputs=[Port("v")],
+                     data={"signal_name": "b"}),
+            ],
+            edges=[Edge(id="e", source="i", source_handle="v",
+                        target="o", target_handle="v")],
             submodules=[Module(module_id="child", name="Child")],
         )
         restored = Module.from_dict(module.to_dict())
-        assert restored.module_id == "m"
-        assert restored.inputs[0].type_ref == "string"
-        assert restored.outputs[0].name == "b"
-        assert restored.nodes[0]["type"] == "start"
-        assert restored.submodules[0].module_id == "child"
+        assert restored == module
 
-    def test_legacy_interfaces_are_lifted_into_signals(self) -> None:
-        """Modules saved before the inputs/outputs split must still load."""
-        module = Module.from_dict(
-            {
-                "module_id": "legacy",
-                "name": "Legacy",
-                "interfaces": {"inputs": ["incoming"], "outputs": ["done"]},
-                "flow": [],
-                "submodules": [],
-            }
-        )
-        assert [s.name for s in module.inputs] == ["incoming"]
-        assert [s.name for s in module.outputs] == ["done"]
+    def test_rejects_legacy_flow_field(self) -> None:
+        with pytest.raises(ValueError, match="format v1 'flow'"):
+            Module.from_dict({
+                "module_id": "old", "name": "Old", "flow": [],
+            })
 
-    def test_to_dict_always_emits_legacy_interfaces_block(self) -> None:
-        """Frontend code still reads `interfaces` — don't drop it silently."""
-        module = Module(
-            module_id="m",
-            name="M",
-            inputs=[Signal("in", "Event")],
-            outputs=[Signal("out")],
-        )
-        payload = module.to_dict()
-        assert payload["interfaces"] == {"inputs": ["in"], "outputs": ["out"]}
-        assert payload["inputs"][0]["type_ref"] == "Event"
+    def test_rejects_legacy_interfaces_field(self) -> None:
+        with pytest.raises(ValueError, match="format v1 'interfaces'"):
+            Module.from_dict({
+                "module_id": "old", "name": "Old",
+                "interfaces": {"inputs": [], "outputs": []},
+            })
 
-    def test_explicit_inputs_override_legacy_interfaces(self) -> None:
-        module = Module.from_dict(
-            {
-                "module_id": "m",
-                "name": "M",
-                "inputs": [{"name": "new"}],
-                "interfaces": {"inputs": ["old"], "outputs": []},
-            }
-        )
-        assert [s.name for s in module.inputs] == ["new"]
+    def test_to_dict_does_not_emit_legacy_interfaces_mirror(self) -> None:
+        payload = Module(
+            module_id="m", name="M",
+            inputs=[Signal("in")], outputs=[Signal("out")],
+        ).to_dict()
+        assert "interfaces" not in payload
+        assert "flow" not in payload

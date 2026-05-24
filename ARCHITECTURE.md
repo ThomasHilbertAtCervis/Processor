@@ -107,10 +107,10 @@ static/
   subpath bundles a second React copy and silently breaks hooks).
 - **Only `lib/api.js` calls `fetch`.** Components receive callbacks and data;
   they do not know URLs.
-- **No domain catalogs in the frontend.** Lists like the eight node kinds,
-  their default labels, or the set of primitive type identifiers come from
-  the backend (`/api/node-kinds`, `/api/data-types/primitives`). The
-  frontend renders what it is told.
+- **No domain catalogs in the frontend.** Lists like the executable node
+  kinds, their default labels, or the set of primitive type identifiers
+  come from the backend (`/api/node-kinds`,
+  `/api/data-types/primitives`). The frontend renders what it is told.
 - **No business defaults inside event handlers.** A freshly created module
   is built by `POST /api/modules`; a freshly dropped node's starter label
   comes from the node-kinds catalog. The frontend never invents an empty
@@ -121,11 +121,16 @@ static/
 
 ## 4. Adding things — the cookbook
 
-### A new flow step type (e.g. `wait_for_signal`)
-1. Add a handler to `Simulator._STEP_HANDLERS` in `simulator.py`. Nothing else
+### A new node kind (e.g. `wait_for_signal`)
+1. Add an activator method to `Simulator._ACTIVATORS` in `simulator.py`.
+   The activator receives the firing port's value and the receiving
+   node; it may fire further ports via the supplied helpers. Nothing else
    in the simulator needs to change.
-2. Add a test in `tests/test_simulator.py` that exercises it.
-3. *(Optional UI)* Add a node component in `static/nodes.js` and a palette entry.
+2. Add it to the catalog in `node_kinds.py` (type id + palette label +
+   default label) so the frontend palette and the `/api/node-kinds`
+   response pick it up automatically.
+3. Add a test in `tests/test_simulator.py` that exercises it end-to-end.
+4. *(Optional UI)* Add a node component in `static/nodes.js`.
 
 ### A new persisted entity (e.g. `Workflow`)
 1. Add a dataclass + `from_dict`/`to_dict` to `models.py`.
@@ -155,18 +160,22 @@ These appear in pull requests from time to time. They are rejected on sight.
       (`'htm/react'`, `'react@17'`, etc.).
 - ❌ A test that mutates a module-level singleton instead of using
       `app.dependency_overrides` or constructing its own service.
-- ❌ An `if step_type == ...` chain growing inside `Simulator`. Extend
-      `_STEP_HANDLERS` instead.
+- ❌ An `if node.type == ...` chain growing inside `Simulator`. Extend
+      `_ACTIVATORS` instead.
 
 ## 6. Testing strategy
 
-- **Models:** round-trip `from_dict` / `to_dict`; legacy-format compatibility.
+- **Models:** round-trip `from_dict` / `to_dict`; v1 files rejected on load.
 - **Repositories:** save → get → list → delete with a `tmp_path`.
-- **Simulator:** one focused test per step type plus an unknown-step error
-  test. Submodule mocking is exercised end-to-end.
-- **Scripting:** every supported AST form (assignment, subscript, list, dict,
-  tuple, compare, binop, call, assert) plus a representative sample of
-  rejected forms (`import`, `for`, attribute access, augmented assign).
+- **Simulator:** one focused test per node kind (`module_input`,
+  `module_output`, `python`, `submodule`), plus request/response
+  suspension/resume, undeclared-port and unknown-kind error paths.
+- **Scripting:** every supported AST form (assignment, subscript, list,
+  dict, tuple, compare, binop, bool-op, unary, call, kwargs, assert, if,
+  for) plus a representative sample of rejected forms (`import`, `while`,
+  `def`, attribute access, augmented assign, tuple-unpacking target,
+  chained comparison). `iter_run` generator semantics (fire events from
+  `outputs[port] = value`) covered separately from `run`.
 - **Test runner:** passing script, assertion failure, runtime error,
   unknown-module reference.
 - **API:** every endpoint, using `app.dependency_overrides` to inject fresh

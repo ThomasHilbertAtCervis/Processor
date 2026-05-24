@@ -72,12 +72,10 @@ def get_script_runner() -> ScriptTestRunner:
 class ModulePayload(BaseModel):
     module_id: str = Field(min_length=1)
     name: str = Field(min_length=1)
-    interfaces: dict[str, list[str]] | None = None
-    inputs: list[dict[str, Any] | str] | None = None
-    outputs: list[dict[str, Any] | str] | None = None
+    inputs: list[dict[str, Any] | str] = Field(default_factory=list)
+    outputs: list[dict[str, Any] | str] = Field(default_factory=list)
     nodes: list[dict[str, Any]] = Field(default_factory=list)
     edges: list[dict[str, Any]] = Field(default_factory=list)
-    flow: list[dict[str, Any]] = Field(default_factory=list)
     submodules: list[dict[str, Any]] = Field(default_factory=list)
 
 

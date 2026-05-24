@@ -1,8 +1,20 @@
+"""Domain dataclasses for the Processor Playground.
+
+Storage format v2: a module is a graph of typed-port **nodes** wired by
+**edges**. There is no top-level ``flow`` list any more; control and data
+travel together along the wires. See ARCHITECTURE.md §2 and PRODUCT.md §2 for
+the model.
+
+These dataclasses know nothing about FastAPI, persistence or execution — they
+are the leaf layer of the dependency stack.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+
+# --------------------------------------------------------------- DataTypeField
 
 @dataclass
 class DataTypeField:
@@ -11,14 +23,13 @@ class DataTypeField:
 
     @staticmethod
     def from_dict(payload: dict[str, Any]) -> "DataTypeField":
-        return DataTypeField(
-            name=payload["name"],
-            type_ref=payload.get("type_ref", "any"),
-        )
+        return DataTypeField(name=payload["name"], type_ref=payload.get("type_ref", "any"))
 
     def to_dict(self) -> dict[str, Any]:
         return {"name": self.name, "type_ref": self.type_ref}
 
+
+# ------------------------------------------------------------------- DataType
 
 @dataclass
 class DataType:
@@ -31,9 +42,6 @@ class DataType:
     @staticmethod
     def from_dict(payload: dict[str, Any]) -> "DataType":
         kind = payload.get("kind", "struct")
-        # Domain rule: struct types own a `fields` list; array/dict types own
-        # an `element_type` instead. Normalise here so every client (UI, MCP
-        # server, scripts) sends only what the type's kind actually uses.
         if kind == "struct":
             fields = [DataTypeField.from_dict(item) for item in payload.get("fields", [])]
             element_type = None
@@ -58,8 +66,12 @@ class DataType:
         }
 
 
+# --------------------------------------------------------------------- Signal
+
 @dataclass
 class Signal:
+    """A module's externally-visible input/output (its 'pin' on its frame)."""
+
     name: str
     type_ref: str = "any"
     filter: str | None = None
@@ -75,57 +87,197 @@ class Signal:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        payload: dict[str, Any] = {"name": self.name, "type_ref": self.type_ref}
+        out: dict[str, Any] = {"name": self.name, "type_ref": self.type_ref}
         if self.filter:
-            payload["filter"] = self.filter
-        return payload
+            out["filter"] = self.filter
+        return out
+
+
+# ----------------------------------------------------------------------- Port
+
+PortKind = Literal["data", "request", "response"]
 
 
 @dataclass
+class Port:
+    """A typed pin on a node.
+
+    ``kind`` lets a node declare that an output / input pair forms a
+    request/response handshake. A ``request`` output's ``pair`` is the name
+    of the same node's ``response`` input — and vice-versa. The simulator
+    uses this pairing to suspend the firing node until the matching value
+    arrives back on its paired input.
+    """
+
+    name: str
+    type_ref: str = "any"
+    kind: PortKind = "data"
+    pair: str | None = None
+
+    @staticmethod
+    def from_dict(payload: dict[str, Any]) -> "Port":
+        return Port(
+            name=payload["name"],
+            type_ref=payload.get("type_ref", "any"),
+            kind=payload.get("kind", "data"),
+            pair=payload.get("pair"),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "name": self.name,
+            "type_ref": self.type_ref,
+            "kind": self.kind,
+        }
+        if self.pair:
+            out["pair"] = self.pair
+        return out
+
+
+# ----------------------------------------------------------------------- Node
+
+@dataclass
+class Node:
+    """One vertex in a module's wiring diagram.
+
+    ``type`` selects the activator (see ``simulator._ACTIVATORS``). ``data``
+    is the kind-specific configuration blob (the Python node stores its
+    ``code`` here; the submodule node stores its ``module_id``; the
+    module_input / module_output nodes store their ``signal_name``).
+    """
+
+    id: str
+    type: str
+    inputs: list[Port] = field(default_factory=list)
+    outputs: list[Port] = field(default_factory=list)
+    data: dict[str, Any] = field(default_factory=dict)
+
+    @staticmethod
+    def from_dict(payload: dict[str, Any]) -> "Node":
+        return Node(
+            id=payload["id"],
+            type=payload["type"],
+            inputs=[Port.from_dict(p) for p in payload.get("inputs", [])],
+            outputs=[Port.from_dict(p) for p in payload.get("outputs", [])],
+            data=dict(payload.get("data", {})),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "type": self.type,
+            "inputs": [p.to_dict() for p in self.inputs],
+            "outputs": [p.to_dict() for p in self.outputs],
+            "data": self.data,
+        }
+
+
+# ----------------------------------------------------------------------- Edge
+
+@dataclass
+class Edge:
+    """A wire from one node's output port to another node's input port.
+
+    Both endpoints are identified by ``(node_id, port_name)``. The port name
+    is also persisted under ReactFlow's ``sourceHandle`` / ``targetHandle``
+    aliases on round-trip so the UI keeps working without a translation
+    layer.
+    """
+
+    id: str
+    source: str
+    source_handle: str
+    target: str
+    target_handle: str
+    data: dict[str, Any] = field(default_factory=dict)
+
+    @staticmethod
+    def from_dict(payload: dict[str, Any]) -> "Edge":
+        source_handle = (
+            payload.get("source_handle")
+            or payload.get("sourceHandle")
+            or ""
+        )
+        target_handle = (
+            payload.get("target_handle")
+            or payload.get("targetHandle")
+            or ""
+        )
+        return Edge(
+            id=payload["id"],
+            source=payload["source"],
+            source_handle=source_handle,
+            target=payload["target"],
+            target_handle=target_handle,
+            data=dict(payload.get("data", {})),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "source": self.source,
+            "source_handle": self.source_handle,
+            "sourceHandle": self.source_handle,
+            "target": self.target,
+            "target_handle": self.target_handle,
+            "targetHandle": self.target_handle,
+            "data": self.data,
+        }
+
+
+# --------------------------------------------------------------------- Module
+
+@dataclass
 class Module:
+    """A process: typed external signals, an internal node/edge graph,
+    and optional reusable submodules.
+
+    Storage format v2 deliberately omits the old ``flow`` list and the
+    ``interfaces`` mirror. Modules persisted in the old format raise on
+    load — see ``from_dict``.
+    """
+
     module_id: str
     name: str
     inputs: list[Signal] = field(default_factory=list)
     outputs: list[Signal] = field(default_factory=list)
-    nodes: list[dict[str, Any]] = field(default_factory=list)
-    edges: list[dict[str, Any]] = field(default_factory=list)
-    flow: list[dict[str, Any]] = field(default_factory=list)
+    nodes: list[Node] = field(default_factory=list)
+    edges: list[Edge] = field(default_factory=list)
     submodules: list["Module"] = field(default_factory=list)
 
     @staticmethod
     def from_dict(payload: dict[str, Any]) -> "Module":
-        legacy_interfaces = payload.get("interfaces") or {}
-        raw_inputs = payload.get("inputs")
-        raw_outputs = payload.get("outputs")
-        if raw_inputs is None:
-            raw_inputs = legacy_interfaces.get("inputs", [])
-        if raw_outputs is None:
-            raw_outputs = legacy_interfaces.get("outputs", [])
+        # v1 modules carry a top-level ``flow`` list and/or an ``interfaces``
+        # mirror. They cannot be auto-migrated to the wire-based model — the
+        # graph topology was never represented. Reject loudly so a stale
+        # stored module isn't silently truncated.
+        if "flow" in payload:
+            raise ValueError(
+                "Module storage format v1 'flow' field is no longer supported; "
+                "model the process as nodes + edges instead."
+            )
+        if "interfaces" in payload:
+            raise ValueError(
+                "Module storage format v1 'interfaces' mirror is no longer "
+                "supported; declare 'inputs'/'outputs' directly."
+            )
         return Module(
             module_id=payload["module_id"],
             name=payload["name"],
-            inputs=[Signal.from_dict(item) for item in raw_inputs],
-            outputs=[Signal.from_dict(item) for item in raw_outputs],
-            nodes=payload.get("nodes", []),
-            edges=payload.get("edges", []),
-            flow=payload.get("flow", []),
+            inputs=[Signal.from_dict(item) for item in payload.get("inputs", [])],
+            outputs=[Signal.from_dict(item) for item in payload.get("outputs", [])],
+            nodes=[Node.from_dict(item) for item in payload.get("nodes", [])],
+            edges=[Edge.from_dict(item) for item in payload.get("edges", [])],
             submodules=[Module.from_dict(item) for item in payload.get("submodules", [])],
         )
 
     def to_dict(self) -> dict[str, Any]:
-        inputs = [item.to_dict() for item in self.inputs]
-        outputs = [item.to_dict() for item in self.outputs]
         return {
             "module_id": self.module_id,
             "name": self.name,
-            "inputs": inputs,
-            "outputs": outputs,
-            "nodes": self.nodes,
-            "edges": self.edges,
-            "flow": self.flow,
-            "submodules": [item.to_dict() for item in self.submodules],
-            "interfaces": {
-                "inputs": [item["name"] for item in inputs],
-                "outputs": [item["name"] for item in outputs],
-            },
+            "inputs": [s.to_dict() for s in self.inputs],
+            "outputs": [s.to_dict() for s in self.outputs],
+            "nodes": [n.to_dict() for n in self.nodes],
+            "edges": [e.to_dict() for e in self.edges],
+            "submodules": [m.to_dict() for m in self.submodules],
         }

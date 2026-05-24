@@ -48,8 +48,10 @@ inputs, see what is emitted, write Python test scripts against it).
 
 - A **module** represents a process. It has:
   - typed **input signals** and typed **output signals** (its interface),
-  - an **implementation**, which is either a **flow chart** or a
-    **Python script**.
+  - an **implementation**, which is a **wire graph** of nodes connected by
+    typed ports. Logic-bearing nodes may run **Python** (with `if`, `for`,
+    `foreach`); composition with other modules is done with **submodule**
+    nodes.
 - Modules can **contain sub-modules**. Composition is recursive.
 - **No circular dependencies** are allowed: if A uses B and B uses C, then C
   may not use A.
@@ -57,13 +59,28 @@ inputs, see what is emitted, write Python test scripts against it).
   outputs are shown** — the implementation is hidden. The user can
   **open / drill into** a sub-module to see and edit its implementation.
 
-### 2.2 Signals
+### 2.2 Signals, ports, and wires (data-flow model)
 
-- Every signal has a **data type**.
-- Signals connect nodes/modules via wires.
+The execution model is **data-flow, not control-flow**. There are no
+shared variables. All a node ever sees is **data arriving on one of its
+inputs**; all a node ever does is **fire data out of one of its outputs**.
+
+- A **module's interface** is its named, typed **input signals** and
+  **output signals**.
+- Inside a module, every node declares **typed input ports** and **typed
+  output ports**. A **wire** (edge) connects one output port of a source
+  node to one input port of a target node, and so represents both *a path
+  of execution* and *a path of data*.
+- **Firing** an output port transfers control (and the carried value) to
+  every node attached to that wire. Execution is synchronous and
+  single-threaded — there is a single path of execution at any time.
+- A node can be **paused** while it asks another node for data: an output
+  port marked as a **request** is paired (`pair="<response_port>"`) with
+  one of the node's input ports. Firing the request suspends the node
+  until the paired response arrives.
 - **Incoming signals can carry a filter** so they only trigger when the
   filter condition is met (e.g. `event.location == "Berlin"`).
-- **Type compatibility is enforced.** Two signals with different data types
+- **Type compatibility is enforced.** Two ports with different data types
   may only be connected through an explicit **translation node** (a
   data-mapping node) that converts one type into the other.
 
@@ -114,28 +131,48 @@ owner in PR #1 (see "Berlin Warehouse" example below). Key visual rules:
   (DeliveryNote); contents (StockItem[]); handed_from (Person); handed_to
   (Person); timestamp (Timestamp) }`.
 
-### 2.5 Node palette (8 node kinds)
+### 2.5 Node palette
 
-| Symbol | Kind          | Purpose                                                  |
-| ------ | ------------- | -------------------------------------------------------- |
-|  ●     | Start         | Entry point of a flow.                                   |
-|  ▷     | Event Trigger | Reacts to an incoming signal; may carry a filter.        |
-|  □     | Condition     | Branching / decision on a boolean expression.            |
-|  ‖     | For Each      | Iterate over a collection (`foreach x in expr`).         |
-|  ⊞     | Sub-module    | Embed another module; double-click to drill in.          |
-|  ▶     | Emit Event    | Emit an outgoing signal carrying a typed payload.        |
-|  ⇄     | Data Mapping  | Translate one data type into another (typed connector). |
-|  ◉     | End           | Termination of a flow.                                   |
+The core executable palette is intentionally small — branching, looping,
+and data-shaping are expressed *inside* `python` nodes (which support
+`if`, `for`, and `foreach`), and composition is expressed via `submodule`
+nodes. Richer palette entries (event-trigger, data-mapping, condition,
+for-each, …) are layered on top of this core in later iterations.
+
+| Symbol | Kind            | Purpose                                                                 |
+| ------ | --------------- | ----------------------------------------------------------------------- |
+|  ▷     | Module Input    | Source-only node; emits values arriving on a module input signal.       |
+|  ◉     | Module Output   | Sink-only node; whatever arrives on its input becomes a module output.  |
+|  λ     | Python          | Runs a sandboxed Python script. Reads `inputs[port]`; firing an output port is `outputs[port] = value`. Supports `if`, `for`, `foreach`. |
+|  ⊞     | Sub-module      | Embeds another module; its declared signals appear as ports. Double-click to drill in. |
+
+> Historical note: an earlier iteration used a control-flow palette of 8
+> kinds (Start, Event Trigger, Condition, For Each, Sub-module, Emit
+> Event, Data Mapping, End). That model was superseded by the wire-based
+> data-flow model in §2.2 — the storage format was bumped to v2 and any
+> v1 module files are rejected on load.
 
 ### 2.6 Simulation
 
-- The user can **run a module** with mock input data and see what happens
-  (variables, datastore reads/writes, file I/O, emitted events, dialogs,
-  API call stubs, sub-module results).
-- Sub-module calls can be **mocked by interface name**, so a single module
-  can be tested in isolation.
-- A flow step can be implemented as Python (executed by a sandboxed safe
-  interpreter — no imports, no attribute access, no `for`/`while`/`def`).
+- The user can **run a module** with mock input data (`{signal_name:
+  value}`) and receive `{"outputs": {signal_name: [values…]}, "trace":
+  […], "status": "complete"}`. An output may be fired multiple times in
+  one run — the list preserves order.
+- Execution is synchronous: firing a port walks every outgoing wire,
+  activates the receiving node, and only returns once that activation
+  (and any descendants) has completed.
+- `python` nodes use **generator semantics**: the script body is driven
+  step-by-step, and every `outputs[port] = value` assignment yields a
+  fire event that the simulator dispatches. This is how a single Python
+  node can fire multiple outputs in sequence while still being a single
+  path of execution.
+- The Python sandbox supports `if`, `for`, `foreach`, comparisons,
+  boolean operators, arithmetic, kwargs in calls, and the read-only
+  builtins `len`/`range`/`min`/`max`/`sum`. It rejects `import`,
+  attribute access, `while`, `def`, `class`, augmented assignment,
+  tuple-unpacking targets, and chained comparisons.
+- Sub-module calls execute by opening a nested simulation frame; mocking
+  by interface name is on the backlog.
 
 ### 2.7 Test scripts
 
@@ -211,10 +248,12 @@ tracks status. Status uses ✅ done, 🚧 in progress, 📋 backlog,
 | F-012 | Same comment                          | Use existing flow-chart libraries if they give a good UX and allow heavy customisation; otherwise build. | ✅ — React Flow chosen. |
 | F-013 | PR #1 owner clarification             | Data types should be **global** (sidebar), not a per-module overlay.                                       | ✅ (commit `d5b6c79`) |
 | F-014 | Repo state                            | Define clear architectural rules, separate concerns, no business logic in views, document the rules.       | ✅ — see `ARCHITECTURE.md`. |
-| F-015 | Repo state                            | Add unit tests for all main components so behaviour doesn't deteriorate during ongoing development.        | ✅ — 108 tests across 7 files. |
+| F-015 | Repo state                            | Add unit tests for all main components so behaviour doesn't deteriorate during ongoing development.        | ✅ — 132 tests across 8 files. |
 | F-016 | PR #1 comment 4526108586              | **Track all feature requests and product descriptions in a file** so agents can always refer back to it.   | ✅ — this file. |
 | F-017 | PR #1 comment 4528722855              | **Mirror every reference image the owner shares into the repo** and embed/link them from `PRODUCT.md`, so meaning is conveyed by the artwork instead of by description alone. | 🚧 — convention in place (`docs/images/`, §6); Berlin Warehouse image referenced. Local binary still to be committed (sandbox egress blocks the S3-backed user-attachment URL). |
 | F-018 | PR #1 comment 4528891051              | **All relevant business logic must execute in the backend.** The frontend is one of many clients (an MCP server is planned so other agents can drive the platform). The UI must never own domain catalogs, normalisation rules, or default-template shapes. | ✅ — moved node-kinds catalog, primitive types, new-module template, and DataType normalisation to the backend behind `/api/node-kinds`, `/api/data-types/primitives`, `POST /api/modules`. ARCHITECTURE.md §1 Goal 6 codifies the rule. |
+| F-019 | Owner direction, May 2026             | **Python steps must support `if`, `for`, and `foreach`** so non-trivial business logic (e.g. half-or-double) reads naturally instead of being expressed as a sequence of mini-steps. | ✅ — `SafeScriptInterpreter` allow-lists `If` and `For`; covered by tests. |
+| F-020 | Owner direction, May 2026             | **Data-flow execution model.** Data flows along wires; there is no direct variable access. A node only ever receives values on its inputs and fires values on its outputs. Firing an output may suspend the node until a paired response arrives (request/response). Single path of execution, generator-style ergonomics for Python nodes. | ✅ — storage format bumped to v2, v1 files rejected on load; simulator rebuilt around frames + request/response handshake; demo `scripts/build_half_or_double.py` rewritten as `module_input → python (if/else) → module_output`. |
 
 ### Cross-cutting / always-on requirements
 

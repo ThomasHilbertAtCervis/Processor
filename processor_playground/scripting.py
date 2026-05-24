@@ -1,37 +1,78 @@
+"""A sandboxed safe interpreter for user-supplied Python snippets.
+
+The interpreter is the security perimeter: every AST form is allow-listed by
+explicit ``isinstance`` checks. There are two driving modes:
+
+* :meth:`SafeScriptInterpreter.run` — fire-and-forget. Used by script tests
+  (``ScriptTestRunner``) and any other caller that just wants the script to
+  run from top to bottom. Writes to a port output (``outputs['x'] = ...``)
+  are rejected.
+
+* :meth:`SafeScriptInterpreter.iter_run` — generator mode. Used by the
+  simulator's Python node activator. Every ``outputs[port_name] = value``
+  statement yields a ``("fire", port_name, value)`` event. The driver
+  performs the wire-side effects (delivering to receivers, handling
+  request/response suspension) and then resumes the generator. Reads from
+  ``inputs`` see whatever the driver has stashed there by the time the
+  script next touches them — this is how a paired response is surfaced.
+"""
 from __future__ import annotations
 
 import ast
-from typing import Any
+from typing import Any, Iterator, Tuple
 
 
 class SafeScriptError(ValueError):
     pass
 
 
+# Yielded by ``iter_run`` whenever the script writes to a port output.
+FireEvent = Tuple[str, str, Any]
+
+
 class SafeScriptInterpreter:
+    """A whitelisting AST walker."""
+
+    # Variable name that the simulator binds to a node's output-port write
+    # dictionary. Writes to ``outputs[port]`` become fire events; everything
+    # else is treated as ordinary subscript assignment.
+    OUTPUTS_BINDING = "outputs"
+
     def __init__(self, env: dict[str, Any]) -> None:
         self.env = env
 
-    def run(self, script: str) -> None:
-        tree = ast.parse(script, mode="exec")
-        for node in tree.body:
-            self._execute_stmt(node)
+    # ----------------------------------------------------------- public API
 
-    def _execute_stmt(self, node: ast.stmt) -> None:
+    def run(self, script: str) -> None:
+        """Execute ``script`` to completion. Reject port-fire attempts."""
+        for event in self.iter_run(script):
+            kind = event[0]
+            if kind == "fire":
+                raise SafeScriptError(
+                    "Output port writes require generator mode (iter_run); "
+                    "they are not allowed in this context."
+                )
+            raise SafeScriptError(f"Unsupported script event: {kind!r}")
+
+    def iter_run(self, script: str) -> Iterator[FireEvent]:
+        """Execute ``script``, yielding a ``('fire', port, value)`` event
+        on every ``outputs[port] = value`` statement.
+
+        The yielded fire is processed by the driver before the script makes
+        any further progress; ``send()`` values are ignored (responses are
+        surfaced to the script via the shared ``env['inputs']`` dict, which
+        the driver mutates between yield points).
+        """
+        tree = ast.parse(script, mode="exec")
+        for stmt in tree.body:
+            yield from self._iter_stmt(stmt)
+
+    # ----------------------------------------------------- statement walker
+
+    def _iter_stmt(self, node: ast.stmt) -> Iterator[FireEvent]:
         if isinstance(node, ast.Assign):
-            if len(node.targets) != 1:
-                raise SafeScriptError("Only single-target assignments are supported")
-            value = self._evaluate(node.value)
-            target = node.targets[0]
-            if isinstance(target, ast.Name):
-                self.env[target.id] = value
-                return
-            if isinstance(target, ast.Subscript):
-                container = self._evaluate(target.value)
-                index = self._evaluate(target.slice)
-                container[index] = value
-                return
-            raise SafeScriptError("Only variable or subscript assignments are supported")
+            yield from self._iter_assign(node)
+            return
         if isinstance(node, ast.Expr):
             self._evaluate(node.value)
             return
@@ -40,7 +81,53 @@ class SafeScriptInterpreter:
                 message = self._evaluate(node.msg) if node.msg else "Assertion failed"
                 raise AssertionError(str(message))
             return
+        if isinstance(node, ast.If):
+            branch = node.body if self._evaluate(node.test) else node.orelse
+            for stmt in branch:
+                yield from self._iter_stmt(stmt)
+            return
+        if isinstance(node, ast.For):
+            if not isinstance(node.target, ast.Name):
+                raise SafeScriptError(
+                    "Only single-name for-loop targets are supported"
+                )
+            if node.orelse:
+                raise SafeScriptError("for/else is not supported")
+            iterable = self._evaluate(node.iter)
+            for value in iterable:
+                self.env[node.target.id] = value
+                for stmt in node.body:
+                    yield from self._iter_stmt(stmt)
+            return
         raise SafeScriptError(f"Unsupported statement: {type(node).__name__}")
+
+    def _iter_assign(self, node: ast.Assign) -> Iterator[FireEvent]:
+        if len(node.targets) != 1:
+            raise SafeScriptError("Only single-target assignments are supported")
+        target = node.targets[0]
+        value = self._evaluate(node.value)
+        if isinstance(target, ast.Name):
+            self.env[target.id] = value
+            return
+        if isinstance(target, ast.Subscript):
+            index = self._evaluate(target.slice)
+            if (
+                isinstance(target.value, ast.Name)
+                and target.value.id == self.OUTPUTS_BINDING
+            ):
+                # The simulator's Python-node activator listens for this.
+                # We still mirror the write into the local outputs dict so
+                # the script can read back what it last produced.
+                container = self._evaluate(target.value)
+                container[index] = value
+                yield ("fire", str(index), value)
+                return
+            container = self._evaluate(target.value)
+            container[index] = value
+            return
+        raise SafeScriptError("Only variable or subscript assignments are supported")
+
+    # ---------------------------------------------------- expression walker
 
     def _evaluate(self, node: ast.AST) -> Any:
         if isinstance(node, ast.Constant):
@@ -80,7 +167,9 @@ class SafeScriptInterpreter:
                 return left < right
             if isinstance(op, ast.LtE):
                 return left <= right
-            raise SafeScriptError(f"Unsupported comparison operator: {type(op).__name__}")
+            raise SafeScriptError(
+                f"Unsupported comparison operator: {type(op).__name__}"
+            )
         if isinstance(node, ast.BinOp):
             left = self._evaluate(node.left)
             right = self._evaluate(node.right)
@@ -92,7 +181,38 @@ class SafeScriptInterpreter:
                 return left * right
             if isinstance(node.op, ast.Div):
                 return left / right
-            raise SafeScriptError(f"Unsupported binary operator: {type(node.op).__name__}")
+            raise SafeScriptError(
+                f"Unsupported binary operator: {type(node.op).__name__}"
+            )
+        if isinstance(node, ast.BoolOp):
+            if isinstance(node.op, ast.And):
+                result: Any = True
+                for value in node.values:
+                    result = self._evaluate(value)
+                    if not result:
+                        return result
+                return result
+            if isinstance(node.op, ast.Or):
+                result = False
+                for value in node.values:
+                    result = self._evaluate(value)
+                    if result:
+                        return result
+                return result
+            raise SafeScriptError(
+                f"Unsupported boolean operator: {type(node.op).__name__}"
+            )
+        if isinstance(node, ast.UnaryOp):
+            operand = self._evaluate(node.operand)
+            if isinstance(node.op, ast.Not):
+                return not operand
+            if isinstance(node.op, ast.USub):
+                return -operand
+            if isinstance(node.op, ast.UAdd):
+                return +operand
+            raise SafeScriptError(
+                f"Unsupported unary operator: {type(node.op).__name__}"
+            )
         if isinstance(node, ast.Call):
             fn = self._evaluate(node.func)
             if not callable(fn):

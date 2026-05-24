@@ -1,13 +1,22 @@
-"""Domain catalog of the diagram node kinds.
+"""Catalog of the executable node kinds (v2 wire-based model).
 
-The set of node kinds (Start, Event Trigger, Condition, …) and their
-human-readable presentation defaults are **domain knowledge** — they describe
-*what kinds of building blocks a process is made of*. They are therefore
-served by the backend so every client (the React UI today, the future MCP
-server, and any other consumer) sees the same catalog.
+Under the v2 data-flow model every node is just a vertex with typed input
+and output ports. Four built-in kinds are sufficient to model any process:
+
+* ``module_input``  — a source for one of the module's declared input signals;
+* ``module_output`` — a sink for one of the module's declared output signals;
+* ``python``        — runs a user-supplied safe Python script that reads
+                      ``inputs[port_name]`` and writes ``outputs[port_name]``;
+* ``submodule``     — embeds another module, mapping the parent's port
+                      activations into the submodule's module_input / output
+                      nodes by name.
+
+Visual-only kinds from earlier iterations (start / event / condition / …)
+are gone with the v1 ``flow`` step list — any branching, looping or mapping
+is expressed inside a Python node now.
 
 See ``ARCHITECTURE.md`` ("Backend is the sole source of truth") and
-``PRODUCT.md`` §2 ("The eight node kinds").
+``PRODUCT.md`` §2.
 """
 from __future__ import annotations
 
@@ -20,13 +29,8 @@ class NodeKind:
     """One entry in the node-kind catalog."""
 
     type: str
-    """Stable identifier used in stored module JSON (e.g. ``"foreach"``)."""
-
     palette_label: str
-    """Label shown in the palette, with its glyph (e.g. ``"‖ For Each"``)."""
-
     default_label: str
-    """Initial ``data.label`` for a freshly placed node of this kind."""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -38,17 +42,12 @@ class NodeKind:
 
 # Order matters: this is the order the palette renders.
 _NODE_KINDS: tuple[NodeKind, ...] = (
-    NodeKind("start",       "● Start",                 "Start"),
-    NodeKind("event",       "▷ Event Trigger",         "Event Trigger"),
-    NodeKind("condition",   "□ Condition / Action",    "Condition"),
-    NodeKind("foreach",     "‖ For Each",              "foreach"),
-    NodeKind("submodule",   "⊞ Sub-module",            "Sub-module"),
-    NodeKind("emit",        "▶ Emit Event",            "Emit Event"),
-    NodeKind("datamapping", "⇄ Data Mapping",          "Data Mapping"),
-    NodeKind("end",         "◉ End",                   "End"),
+    NodeKind("module_input",  "▷ Module Input",  "Input"),
+    NodeKind("module_output", "◉ Module Output", "Output"),
+    NodeKind("python",        "λ Python",        "Python"),
+    NodeKind("submodule",     "⊞ Sub-module",    "Sub-module"),
 )
 
 
 def list_node_kinds() -> list[NodeKind]:
-    """Return the full catalog in palette order."""
     return list(_NODE_KINDS)

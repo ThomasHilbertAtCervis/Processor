@@ -1,203 +1,365 @@
-"""Simulation engine for :class:`Module` flows.
+"""Wire-and-port simulator for :class:`Module` graphs.
 
-Step dispatch is implemented as a registry of handler methods rather than a
-single ``if/elif`` ladder. Adding a step type means adding one method and one
-entry to ``_STEP_HANDLERS`` — nothing else in this file changes (Open/Closed).
-See ARCHITECTURE.md ("Adding things — A new flow step type").
+Execution model — synchronous, single-threaded, call-stack semantics:
+
+1. ``run(module, input_data)`` fires each entry of ``input_data`` into the
+   corresponding ``module_input`` node's output port.
+2. Firing an output port walks every outgoing :class:`~models.Edge` and
+   *delivers* the value to the target node's input port — synchronously, one
+   wire at a time.
+3. Delivering to a node activates its handler (see :data:`_ACTIVATORS`):
+   - ``module_output`` records the value as a module-level emitted signal
+     (top frame) or fires the parent ``submodule`` node's matching output
+     port (nested frame);
+   - ``submodule`` opens a nested frame and fires the submodule's
+     ``module_input`` of the same name;
+   - ``python`` runs the node's script as a generator. Each
+     ``outputs[port] = value`` statement yields a fire that the simulator
+     processes immediately (so any downstream chain runs to completion
+     before the script resumes).
+4. **Request / response.** A node may declare a paired
+   ``request`` output and ``response`` input. Firing the request suspends
+   the firing Python node until exactly one delivery arrives on the paired
+   response port; the simulator then resumes the script with the response
+   value visible at ``inputs[response_port]``.
+
+This module imports ``models`` and ``scripting`` only; nothing about FastAPI,
+the file system, or HTTP belongs here (see ARCHITECTURE.md §2).
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
-from .models import Module
+from .models import Edge, Module, Node, Port
 from .scripting import SafeScriptInterpreter
 
 
-@dataclass
-class SimulationState:
-    variables: dict[str, Any] = field(default_factory=dict)
-    datastore: dict[str, Any] = field(default_factory=dict)
-    files: dict[str, str] = field(default_factory=dict)
-    outputs: list[Any] = field(default_factory=list)
-    events: list[dict[str, Any]] = field(default_factory=list)
+class SimulatorError(RuntimeError):
+    """Raised when the wired graph is invalid or a node misbehaves at runtime."""
+
+
+# A callback the parent frame installs on a child frame so that the child's
+# ``module_output`` deliveries propagate as fires on the parent's enclosing
+# ``submodule`` node. The top-level frame's callback records into the run
+# result instead.
+OnModuleOutput = Callable[[str, Any], None]
 
 
 @dataclass
-class _StepContext:
-    """Everything a step handler may inspect or mutate.
+class _Frame:
+    """One module's runtime context within the call stack."""
 
-    Bundling these into a single value keeps handler signatures uniform and
-    makes it trivial to add new context (e.g. clock, logger) without touching
-    every handler.
+    module: Module
+    on_module_output: OnModuleOutput
+    nodes_by_id: dict[str, Node]
+    edges_from: dict[tuple[str, str], list[Edge]]
+
+
+@dataclass
+class _PythonActivation:
+    """Bookkeeping for one suspended-or-active Python-node activation.
+
+    Holds the env (so the simulator can inject a response into ``inputs``)
+    and the response port the activation is currently blocking on, if any.
     """
 
-    step: dict[str, Any]
-    state: SimulationState
-    mocks: dict[str, Any]
-    module: Module
-    simulator: "Simulator"
+    node: Node
+    env: dict[str, Any]
+    waiting_on: str | None = None
+    response_value: Any = None
+    response_received: bool = False
 
 
-StepHandler = Callable[[_StepContext], Any]
+@dataclass
+class _RunResult:
+    outputs: dict[str, list[Any]] = field(default_factory=dict)
+    trace: list[dict[str, Any]] = field(default_factory=list)
 
 
 class Simulator:
-    def __init__(self, modules_root: Path | None = None) -> None:
-        self.modules_root = modules_root or Path.cwd()
+    """Stateless except for the single in-flight ``run`` call.
 
-    # ---------------------------------------------------------------- public
+    A fresh ``Simulator`` is safe to reuse across runs; per-run state lives
+    on the local stack of ``run``.
+    """
+
+    # ----------------------------------------------------------- public API
 
     def run(
         self,
         module: Module,
         input_data: dict[str, Any] | None = None,
-        mocks: dict[str, Any] | None = None,
+        mocks: dict[str, Any] | None = None,  # accepted for API compat, unused
     ) -> dict[str, Any]:
-        state = SimulationState(variables=dict(input_data or {}))
-        result = self._execute_module(module, state, mocks or {})
+        """Run ``module``, feeding each ``input_data[signal_name]`` into the
+        module's matching ``module_input`` node.
+
+        Returns ``{ "outputs": {signal: [values]}, "trace": [...],
+        "status": "complete" }``.
+        """
+        del mocks  # kept in the signature for backward HTTP/MCP compat
+        result = _RunResult(outputs={sig.name: [] for sig in module.outputs})
+
+        def record_top_level_output(signal_name: str, value: Any) -> None:
+            result.outputs.setdefault(signal_name, []).append(value)
+            result.trace.append(
+                {"event": "module_output", "signal": signal_name, "value": value}
+            )
+
+        # Per-run state (kept on the simulator instance for the duration of
+        # this call only — ``run`` is the only public entry point that
+        # touches it).
+        self._result = result
+        # Maps node-object-identity -> the currently suspended activation on
+        # that node. Single path of execution means at most one activation
+        # waiting per node at any moment.
+        self._waiting: dict[int, _PythonActivation] = {}
+
+        frame = self._make_frame(module, record_top_level_output)
+        for signal_name, value in (input_data or {}).items():
+            self._fire_module_input(frame, signal_name, value)
+
         return {
-            "result": result,
-            "variables": state.variables,
-            "datastore": state.datastore,
-            "files": state.files,
-            "outputs": state.outputs,
-            "events": state.events,
+            "outputs": result.outputs,
+            "trace": result.trace,
+            "status": "complete",
         }
 
-    # --------------------------------------------------------------- private
+    # -------------------------------------------------------- frame helpers
 
-    def _execute_module(
-        self, module: Module, state: SimulationState, mocks: dict[str, Any]
-    ) -> Any:
-        last: Any = None
-        for step in module.flow:
-            step_type = step.get("type")
-            handler = self._STEP_HANDLERS.get(step_type)
-            if handler is None:
-                raise ValueError(f"Unknown step type: {step_type}")
-            ctx = _StepContext(
-                step=step, state=state, mocks=mocks, module=module, simulator=self
+    def _make_frame(self, module: Module, on_output: OnModuleOutput) -> _Frame:
+        nodes_by_id = {n.id: n for n in module.nodes}
+        edges_from: dict[tuple[str, str], list[Edge]] = {}
+        for edge in module.edges:
+            edges_from.setdefault((edge.source, edge.source_handle), []).append(edge)
+        return _Frame(
+            module=module,
+            on_module_output=on_output,
+            nodes_by_id=nodes_by_id,
+            edges_from=edges_from,
+        )
+
+    def _fire_module_input(
+        self, frame: _Frame, signal_name: str, value: Any
+    ) -> None:
+        for node in frame.module.nodes:
+            if node.type == "module_input" and node.data.get("signal_name") == signal_name:
+                if not node.outputs:
+                    raise SimulatorError(
+                        f"module_input node '{node.id}' has no output port declared"
+                    )
+                port_name = node.outputs[0].name
+                self._result.trace.append(
+                    {"event": "module_input", "signal": signal_name, "value": value}
+                )
+                self._fire_from_node(frame, node.id, port_name, value)
+                return
+        raise SimulatorError(
+            f"No module_input node declared for signal '{signal_name}' "
+            f"in module '{frame.module.module_id}'"
+        )
+
+    # ------------------------------------------------------ fire / deliver
+
+    def _fire_from_node(
+        self, frame: _Frame, node_id: str, port_name: str, value: Any
+    ) -> None:
+        edges = frame.edges_from.get((node_id, port_name), [])
+        for edge in edges:
+            self._deliver(frame, edge.target, edge.target_handle, value)
+
+    def _deliver(
+        self,
+        frame: _Frame,
+        target_node_id: str,
+        target_port_name: str,
+        value: Any,
+    ) -> None:
+        target = frame.nodes_by_id.get(target_node_id)
+        if target is None:
+            raise SimulatorError(
+                f"Edge target node '{target_node_id}' not found in module "
+                f"'{frame.module.module_id}'"
             )
-            last = handler(ctx)
-        return last
-
-    # ------------------------------------------------------------- handlers
-
-    @staticmethod
-    def _set_var(ctx: _StepContext) -> Any:
-        ctx.state.variables[ctx.step["name"]] = ctx.step.get("value")
-        return ctx.state.variables[ctx.step["name"]]
-
-    @staticmethod
-    def _emit(ctx: _StepContext) -> Any:
-        payload = ctx.step.get("payload")
-        ctx.state.outputs.append(payload)
-        ctx.state.events.append({"event": ctx.step.get("event", "emit"), "payload": payload})
-        return payload
-
-    @staticmethod
-    def _datastore_write(ctx: _StepContext) -> Any:
-        ctx.state.datastore[ctx.step["key"]] = ctx.step.get("value")
-        return ctx.state.datastore[ctx.step["key"]]
-
-    @staticmethod
-    def _datastore_read(ctx: _StepContext) -> Any:
-        value = ctx.state.datastore.get(ctx.step["key"])
-        ctx.state.variables[ctx.step.get("target", ctx.step["key"])] = value
-        return value
-
-    @staticmethod
-    def _file_write(ctx: _StepContext) -> Any:
-        ctx.state.files[ctx.step["path"]] = str(ctx.step.get("content", ""))
-        return ctx.state.files[ctx.step["path"]]
-
-    @staticmethod
-    def _file_read(ctx: _StepContext) -> Any:
-        value = ctx.state.files.get(ctx.step["path"], "")
-        ctx.state.variables[ctx.step.get("target", "file_content")] = value
-        return value
-
-    @staticmethod
-    def _dialog(ctx: _StepContext) -> Any:
-        payload = {
-            "dialog": ctx.step.get("message", ""),
-            "response": ctx.step.get("response", "ok"),
-        }
-        ctx.state.events.append(payload)
-        return payload["response"]
-
-    @staticmethod
-    def _print(ctx: _StepContext) -> Any:
-        message = ctx.step.get("message", "")
-        ctx.state.events.append({"print": message})
-        return message
-
-    @staticmethod
-    def _email_send(ctx: _StepContext) -> Any:
-        payload = {
-            "email": {
-                "to": ctx.step.get("to"),
-                "subject": ctx.step.get("subject", ""),
-                "body": ctx.step.get("body", ""),
-            }
-        }
-        ctx.state.events.append(payload)
-        return payload
-
-    @staticmethod
-    def _api_call(ctx: _StepContext) -> Any:
-        payload = {
-            "api_call": {
-                "url": ctx.step.get("url", ""),
-                "method": ctx.step.get("method", "GET"),
-                "response": ctx.step.get("mock_response", {"status": 200}),
-            }
-        }
-        ctx.state.events.append(payload)
-        return payload["api_call"]["response"]
-
-    @staticmethod
-    def _run_submodule(ctx: _StepContext) -> Any:
-        interface = ctx.step.get("interface")
-        if interface and interface in ctx.mocks:
-            response = ctx.mocks[interface]
-            ctx.state.events.append({"mocked_interface": interface, "response": response})
-            return response
-        submodules = {sub.module_id: sub for sub in ctx.module.submodules}
-        sub_id = ctx.step["module_id"]
-        if sub_id not in submodules:
-            raise ValueError(
-                f"Submodule '{sub_id}' not found in module '{ctx.module.module_id}'"
+        # If a Python node on this very target is currently suspended waiting
+        # for its paired response, this delivery is that response — stash it
+        # and unwind, do NOT start a fresh activation.
+        activation = self._waiting.get(id(target))
+        if activation is not None and activation.waiting_on == target_port_name:
+            activation.response_value = value
+            activation.response_received = True
+            activation.env["inputs"][target_port_name] = value
+            self._result.trace.append(
+                {
+                    "event": "response",
+                    "module": frame.module.module_id,
+                    "node": target_node_id,
+                    "port": target_port_name,
+                    "value": value,
+                }
             )
-        return ctx.simulator._execute_module(submodules[sub_id], ctx.state, ctx.mocks)
+            return
 
-    @staticmethod
-    def _python(ctx: _StepContext) -> Any:
-        local_env = {
-            "variables": ctx.state.variables,
-            "datastore": ctx.state.datastore,
-            "files": ctx.state.files,
-            "outputs": ctx.state.outputs,
-            "events": ctx.state.events,
-            "result": None,
+        self._result.trace.append(
+            {
+                "event": "deliver",
+                "module": frame.module.module_id,
+                "node": target_node_id,
+                "port": target_port_name,
+                "value": value,
+            }
+        )
+        activator = _ACTIVATORS.get(target.type)
+        if activator is None:
+            raise SimulatorError(
+                f"Unknown node type '{target.type}' on node '{target_node_id}'"
+            )
+        activator(self, frame, target, target_port_name, value)
+
+    # ---------------------------------------------------- python activator
+
+    def _activate_python(
+        self, frame: _Frame, node: Node, port_name: str, value: Any
+    ) -> None:
+        env: dict[str, Any] = {
+            "inputs": {port_name: value},
+            "outputs": {},
+            "current_input": port_name,
+            # A small, safe builtins surface — same set the script-test
+            # runner exposes — so node scripts can compute against
+            # collections without reaching for attribute access.
+            "len": len,
+            "range": range,
+            "min": min,
+            "max": max,
+            "sum": sum,
         }
-        SafeScriptInterpreter(local_env).run(ctx.step.get("code", "result = None"))
-        return local_env.get("result")
+        code = node.data.get("code", "")
+        gen = SafeScriptInterpreter(env).iter_run(code)
+        try:
+            event = next(gen)
+            while True:
+                kind = event[0]
+                if kind != "fire":
+                    raise SimulatorError(f"Unexpected script event: {event!r}")
+                _, fire_port, fire_value = event
+                self._process_python_fire(frame, node, env, fire_port, fire_value)
+                event = next(gen)
+        except StopIteration:
+            return
 
-    # Registry — extend this when adding a new step type.
-    _STEP_HANDLERS: dict[str | None, StepHandler] = {
-        "set_var": _set_var,
-        "emit": _emit,
-        "datastore_write": _datastore_write,
-        "datastore_read": _datastore_read,
-        "file_write": _file_write,
-        "file_read": _file_read,
-        "dialog": _dialog,
-        "print": _print,
-        "email_send": _email_send,
-        "api_call": _api_call,
-        "run_submodule": _run_submodule,
-        "python": _python,
-    }
+    def _process_python_fire(
+        self,
+        frame: _Frame,
+        node: Node,
+        env: dict[str, Any],
+        fire_port: str,
+        fire_value: Any,
+    ) -> None:
+        port = _find_port(node.outputs, fire_port)
+        if port is None:
+            raise SimulatorError(
+                f"Python node '{node.id}' fired undeclared output port "
+                f"'{fire_port}'"
+            )
+        if port.kind == "request":
+            if not port.pair:
+                raise SimulatorError(
+                    f"Request output port '{fire_port}' on node '{node.id}' "
+                    f"has no 'pair' set — set it to the response input port name."
+                )
+            response_input = _find_port(node.inputs, port.pair)
+            if response_input is None or response_input.kind != "response":
+                raise SimulatorError(
+                    f"Node '{node.id}' declares request '{fire_port}' paired "
+                    f"with response '{port.pair}', but no matching response "
+                    f"input port is declared."
+                )
+            activation = _PythonActivation(
+                node=node, env=env, waiting_on=port.pair
+            )
+            self._waiting[id(node)] = activation
+            try:
+                self._fire_from_node(frame, node.id, fire_port, fire_value)
+            finally:
+                self._waiting.pop(id(node), None)
+            if not activation.response_received:
+                raise SimulatorError(
+                    f"Node '{node.id}' fired request '{fire_port}' but no "
+                    f"value was delivered to paired response port "
+                    f"'{port.pair}'."
+                )
+            # Re-tag current_input so the script can dispatch on the resume.
+            env["current_input"] = port.pair
+        else:
+            self._fire_from_node(frame, node.id, fire_port, fire_value)
+
+    # -------------------------------------------------- submodule activator
+
+    def _activate_submodule(
+        self, frame: _Frame, node: Node, port_name: str, value: Any
+    ) -> None:
+        submodule_id = node.data.get("module_id")
+        if not submodule_id:
+            raise SimulatorError(
+                f"submodule node '{node.id}' has no 'module_id' in its data"
+            )
+        submodule = next(
+            (s for s in frame.module.submodules if s.module_id == submodule_id),
+            None,
+        )
+        if submodule is None:
+            raise SimulatorError(
+                f"Submodule '{submodule_id}' not found in module "
+                f"'{frame.module.module_id}'"
+            )
+
+        # When the nested module fires one of its module_output nodes,
+        # propagate the value as a fire on the parent's submodule node's
+        # output port of the same name.
+        def on_sub_output(signal_name: str, sub_value: Any) -> None:
+            self._fire_from_node(frame, node.id, signal_name, sub_value)
+
+        sub_frame = self._make_frame(submodule, on_sub_output)
+        self._fire_module_input(sub_frame, port_name, value)
+
+    # ----------------------------------------------- module_output activator
+
+    def _activate_module_output(
+        self, frame: _Frame, node: Node, port_name: str, value: Any
+    ) -> None:
+        signal_name = node.data.get("signal_name")
+        if not signal_name:
+            raise SimulatorError(
+                f"module_output node '{node.id}' has no 'signal_name' in its data"
+            )
+        frame.on_module_output(signal_name, value)
+
+    # ----------------------------------------------- module_input activator
+
+    def _activate_module_input(
+        self, frame: _Frame, node: Node, port_name: str, value: Any
+    ) -> None:
+        # module_input is a source, not a sink. Edges should never target it.
+        raise SimulatorError(
+            f"module_input node '{node.id}' was wired as an edge target; "
+            f"it is a source-only node."
+        )
+
+
+def _find_port(ports: Iterable[Port], name: str) -> Port | None:
+    for port in ports:
+        if port.name == name:
+            return port
+    return None
+
+
+# Registry mapping node ``type`` to activator method. Extend this when
+# adding a new node kind — nothing else in this file needs to change.
+_ACTIVATORS: dict[str, Callable[[Simulator, _Frame, Node, str, Any], None]] = {
+    "module_input": Simulator._activate_module_input,
+    "module_output": Simulator._activate_module_output,
+    "python": Simulator._activate_python,
+    "submodule": Simulator._activate_submodule,
+}

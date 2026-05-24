@@ -75,6 +75,57 @@ class TestAllowedConstructs:
         _run("note(1)", {"note": lambda v: side_effects.append(v)})
         assert side_effects == [1]
 
+    def test_if_then_branch(self) -> None:
+        env = _run("x = 0\nif 1 < 2:\n    x = 5", {})
+        assert env["x"] == 5
+
+    def test_if_else_branch(self) -> None:
+        env = _run("x = 0\nif 1 > 2:\n    x = 5\nelse:\n    x = 9", {})
+        assert env["x"] == 9
+
+    def test_if_elif_chain(self) -> None:
+        script = (
+            "if v < 0:\n    label = 'neg'\n"
+            "elif v == 0:\n    label = 'zero'\n"
+            "else:\n    label = 'pos'\n"
+        )
+        assert _run(script, {"v": 0})["label"] == "zero"
+        assert _run(script, {"v": -3})["label"] == "neg"
+        assert _run(script, {"v": 7})["label"] == "pos"
+
+    def test_for_loop_accumulates(self) -> None:
+        env = _run(
+            "total = 0\nfor n in items:\n    total = total + n",
+            {"items": [1, 2, 3, 4]},
+        )
+        assert env["total"] == 10
+
+    def test_for_loop_with_inner_if(self) -> None:
+        env = _run(
+            (
+                "kept = []\n"
+                "for n in items:\n"
+                "    if n >= 2 and n <= 4:\n"
+                "        kept = kept + [n]\n"
+            ),
+            {"items": [1, 2, 3, 4, 5, 6]},
+        )
+        assert env["kept"] == [2, 3, 4]
+
+    def test_bool_and_short_circuits(self) -> None:
+        env = _run("x = a and b", {"a": 0, "b": "untouched"})
+        assert env["x"] == 0
+
+    def test_bool_or_short_circuits(self) -> None:
+        env = _run("x = a or b", {"a": "first", "b": "second"})
+        assert env["x"] == "first"
+
+    def test_unary_not(self) -> None:
+        assert _run("x = not False")["x"] is True
+
+    def test_unary_negative(self) -> None:
+        assert _run("x = -3")["x"] == -3
+
 
 # ---------------------------------------------------------------- rejected
 
@@ -84,12 +135,19 @@ class TestRejectedConstructs:
         [
             ("import os", "Unsupported statement: Import"),
             ("from os import path", "Unsupported statement: ImportFrom"),
-            ("for i in [1]:\n    pass", "Unsupported statement: For"),
             ("while True:\n    pass", "Unsupported statement: While"),
             ("def f():\n    pass", "Unsupported statement: FunctionDef"),
             ("class C:\n    pass", "Unsupported statement: ClassDef"),
             ("x += 1", "Unsupported statement: AugAssign"),
             ("a, b = 1, 2", "Only variable or subscript assignments"),
+            (
+                "for a, b in pairs:\n    pass",
+                "Only single-name for-loop targets",
+            ),
+            (
+                "for i in [1]:\n    pass\nelse:\n    pass",
+                "for/else is not supported",
+            ),
         ],
     )
     def test_disallowed_statements(self, script: str, message: str) -> None:
@@ -124,3 +182,51 @@ class TestRejectedConstructs:
     def test_unsupported_binary_operator(self) -> None:
         with pytest.raises(SafeScriptError, match="Unsupported binary operator"):
             _run("x = 1 % 2")
+
+
+# ----------------------------------------------------------------- iter_run
+
+class TestIterRunFireEvents:
+    def test_assigning_to_outputs_yields_fire_event(self) -> None:
+        env: dict = {"outputs": {}, "inputs": {"v": 3}}
+        events = list(SafeScriptInterpreter(env).iter_run("outputs['result'] = inputs['v']"))
+        assert events == [("fire", "result", 3)]
+        assert env["outputs"] == {"result": 3}
+
+    def test_multiple_fires_are_yielded_in_order(self) -> None:
+        env: dict = {"outputs": {}}
+        events = list(SafeScriptInterpreter(env).iter_run(
+            "outputs['a'] = 1\noutputs['b'] = 2\n"
+        ))
+        assert events == [("fire", "a", 1), ("fire", "b", 2)]
+
+    def test_fire_inside_if_branch(self) -> None:
+        env: dict = {"outputs": {}, "inputs": {"v": 5}}
+        script = (
+            "if inputs['v'] < 10:\n"
+            "    outputs['small'] = inputs['v']\n"
+            "else:\n"
+            "    outputs['big'] = inputs['v']\n"
+        )
+        events = list(SafeScriptInterpreter(env).iter_run(script))
+        assert events == [("fire", "small", 5)]
+
+    def test_fire_inside_for_loop(self) -> None:
+        env: dict = {"outputs": {}, "items": [1, 2, 3]}
+        events = list(SafeScriptInterpreter(env).iter_run(
+            "for n in items:\n    outputs['each'] = n\n"
+        ))
+        assert events == [
+            ("fire", "each", 1), ("fire", "each", 2), ("fire", "each", 3),
+        ]
+
+    def test_run_rejects_script_that_fires(self) -> None:
+        env: dict = {"outputs": {}}
+        with pytest.raises(SafeScriptError, match="generator mode"):
+            SafeScriptInterpreter(env).run("outputs['x'] = 1")
+
+    def test_iter_run_yields_nothing_when_no_fire(self) -> None:
+        env: dict = {}
+        assert list(SafeScriptInterpreter(env).iter_run("x = 1")) == []
+        assert env["x"] == 1
+

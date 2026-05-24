@@ -1,15 +1,17 @@
-"""Domain catalogs served by the backend so every client (UI, MCP) shares them."""
+"""Domain catalogs served by the backend (v2)."""
 from __future__ import annotations
 
 from processor_playground.node_kinds import list_node_kinds
 from processor_playground.primitives import list_primitive_type_ids
 
 
-def test_node_kinds_catalog_has_all_eight_kinds_in_palette_order() -> None:
+def test_node_kinds_catalog_lists_executable_kinds_in_palette_order() -> None:
     kinds = list_node_kinds()
     assert [k.type for k in kinds] == [
-        "start", "event", "condition", "foreach",
-        "submodule", "emit", "datamapping", "end",
+        "module_input",
+        "module_output",
+        "python",
+        "submodule",
     ]
 
 
@@ -25,7 +27,6 @@ def test_node_kind_to_dict_is_serialisable() -> None:
 
 
 def test_primitive_type_ids_are_stable() -> None:
-    # PRODUCT.md §2 promises: int, decimal, string, bool, timestamp, any.
     assert list_primitive_type_ids() == [
         "int", "decimal", "string", "bool", "timestamp", "any",
     ]

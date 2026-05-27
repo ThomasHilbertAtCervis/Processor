@@ -254,6 +254,63 @@ const DbNode = ({ data, selected, type }) => {
   `;
 };
 
+const CONTROL_FLOW_ICONS = {
+  branch: '◆',
+  join: '◇',
+  counted_loop: '↻',
+  foreach: '⇄',
+};
+
+const CONTROL_FLOW_DEFAULT_LABELS = {
+  branch: 'Branch',
+  join: 'Join',
+  counted_loop: 'Counted Loop',
+  foreach: 'For Each',
+};
+
+const ControlFlowNode = ({ data, selected, type }) => {
+  const ports = data._ports || {};
+  const inputs = ports.inputs || [];
+  const outputs = ports.outputs || [];
+  const rowCount = Math.max(inputs.length, outputs.length, 1);
+  return html`
+    <div className=${`node-controlflow node-${type}${selected ? ' selected' : ''}`}>
+      <div className="node-controlflow-header">
+        <span className="node-controlflow-icon">${CONTROL_FLOW_ICONS[type] || '•'}</span>
+        <span className="node-controlflow-name">${data.label || CONTROL_FLOW_DEFAULT_LABELS[type] || type}</span>
+      </div>
+      <div className="node-python-body" style=${{ minHeight: `${rowCount * 24}px` }}>
+        <div className="node-submodule-col node-submodule-col-in">
+          ${inputs.map((port) => html`
+            <div key=${`in-${port.name}`} className="node-port node-port-in">
+              <${Handle}
+                type="target"
+                position=${Position.Left}
+                id=${port.name}
+                className="node-port-handle"
+              />
+              <span className="node-port-label">${port.name}</span>
+            </div>
+          `)}
+        </div>
+        <div className="node-submodule-col node-submodule-col-out">
+          ${outputs.map((port) => html`
+            <div key=${`out-${port.name}`} className="node-port node-port-out">
+              <span className="node-port-label">${port.name}</span>
+              <${Handle}
+                type="source"
+                position=${Position.Right}
+                id=${port.name}
+                className="node-port-handle"
+              />
+            </div>
+          `)}
+        </div>
+      </div>
+    </div>
+  `;
+};
+
 export const NODE_TYPES = {
   module_input: ModuleInputNode,
   module_output: ModuleOutputNode,
@@ -261,12 +318,15 @@ export const NODE_TYPES = {
   submodule: SubmoduleNode,
   db_read: DbNode,
   db_create: DbNode,
+  branch: ControlFlowNode,
+  join: ControlFlowNode,
+  counted_loop: ControlFlowNode,
+  foreach: ControlFlowNode,
   // Legacy v1 visual kinds — still mapped so historical screenshots/tests
   // don't crash if they sneak into a v2 module.
   start: StartNode,
   event: EventNode,
   condition: ConditionNode,
-  foreach: ForeachNode,
   emit: EmitNode,
   end: EndNode,
   datamapping: DataMappingNode,

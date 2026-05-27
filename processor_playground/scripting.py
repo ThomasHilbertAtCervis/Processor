@@ -54,6 +54,21 @@ class SafeScriptInterpreter:
                 )
             raise SafeScriptError(f"Unsupported script event: {kind!r}")
 
+    def evaluate_expression(self, expression: str) -> Any:
+        """Parse and evaluate a single Python expression against ``env``.
+
+        Used by nodes that take an expression as a static parameter (e.g.
+        the ``branch`` node's ``condition``). Same allow-list as the rest
+        of the interpreter — comparisons, boolean ops, arithmetic,
+        subscripting, ``len/range/min/max/sum`` — no statements, no
+        attribute access, no imports.
+        """
+        try:
+            tree = ast.parse(expression, mode="eval")
+        except SyntaxError as exc:
+            raise SafeScriptError(f"Invalid expression: {exc.msg}") from exc
+        return self._evaluate(tree.body)
+
     def iter_run(self, script: str) -> Iterator[FireEvent]:
         """Execute ``script``, yielding a ``('fire', port, value)`` event
         on every ``outputs[port] = value`` statement.

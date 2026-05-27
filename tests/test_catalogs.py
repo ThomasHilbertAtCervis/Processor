@@ -14,6 +14,10 @@ def test_node_kinds_catalog_lists_executable_kinds_in_palette_order() -> None:
         "submodule",
         "db_read",
         "db_create",
+        "branch",
+        "join",
+        "counted_loop",
+        "foreach",
     ]
 
 
@@ -29,6 +33,8 @@ def test_node_kind_to_dict_is_serialisable() -> None:
 
 
 def test_primitive_type_ids_are_stable() -> None:
+    # "any" is intentionally excluded so the UI dropdowns never let a user
+    # pick it; the product requires strong typing.
     assert list_primitive_type_ids() == [
-        "int", "decimal", "string", "bool", "timestamp", "any",
+        "int", "decimal", "string", "bool", "timestamp",
     ]

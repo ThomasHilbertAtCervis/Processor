@@ -89,6 +89,7 @@ export function PropertiesPanel({ selected, nodes, edges, onUpdateNode, onUpdate
                   || 'any'}
                 onChange=${(event) => setField('signal_type', event.target.value)}
               >
+                ${nodeType === 'module_input' && html`<option value="any">any</option>`}
                 ${[...primitives, ...dataTypes.map((dt) => dt.type_id)].map((typeName) => html`
                   <option key=${typeName} value=${typeName}>${typeName}</option>
                 `)}
@@ -110,6 +111,39 @@ export function PropertiesPanel({ selected, nodes, edges, onUpdateNode, onUpdate
                   <option key=${dataType.type_id} value=${dataType.type_id}>${dataType.name}</option>
                 `)}
               </select>
+            </div>
+          `}
+          ${nodeType === 'branch' && html`
+            <div className="prop-row">
+              <label>Value data type</label>
+              <select
+                value=${localData.value_type
+                  || (item.inputs && item.inputs[0] && item.inputs[0].type_ref)
+                  || 'any'}
+                onChange=${(event) => setField('value_type', event.target.value)}
+              >
+                ${[...primitives, ...dataTypes.map((dt) => dt.type_id)].map((typeName) => html`
+                  <option key=${typeName} value=${typeName}>${typeName}</option>
+                `)}
+              </select>
+            </div>
+            <div className="prop-row prop-row-code">
+              <label>Condition (Python expression)</label>
+              <textarea
+                className="prop-code"
+                spellCheck=${false}
+                rows="3"
+                value=${localData.condition || ''}
+                placeholder="value > 0"
+                onInput=${(event) => setField('condition', event.target.value)}
+              />
+              <div className="prop-hint">
+                The expression sees the incoming payload as <code>value</code>.
+                Truthy → fires on <code>true</code>; falsy → fires on <code>false</code>.
+                Both outputs carry the original value unchanged and share the data type above.
+                Sandboxed: comparisons, boolean ops, arithmetic, subscripting,
+                <code> len/range/min/max/sum</code>.
+              </div>
             </div>
           `}
           ${(nodeType === 'event' || nodeType === 'condition') && html`
@@ -257,6 +291,12 @@ export function PropertiesPanel({ selected, nodes, edges, onUpdateNode, onUpdate
     `;
   }
 
+  // Edges no longer carry their own data type — they inherit it from the
+  // output port they're connected to. Show that derived type read-only so
+  // the user can confirm the wire is carrying what they think it is.
+  const sourceNode = nodes.find((node) => node.id === item.source);
+  const sourcePort = sourceNode && (sourceNode.outputs || []).find((p) => p.name === item.sourceHandle);
+  const derivedType = sourcePort ? sourcePort.type_ref : null;
   return html`
     <div className="properties-shell">
       <div className="properties-panel">
@@ -266,13 +306,12 @@ export function PropertiesPanel({ selected, nodes, edges, onUpdateNode, onUpdate
           <input value=${localData.label || ''} onInput=${(event) => setField('label', event.target.value)} />
         </div>
         <div className="prop-row">
-          <label>Signal Type</label>
-          <select value=${localData.signalType || ''} onChange=${(event) => setField('signalType', event.target.value)}>
-            <option value="">— none —</option>
-            ${dataTypes.map((dataType) => html`
-              <option key=${dataType.type_id} value=${dataType.type_id}>${dataType.name}</option>
-            `)}
-          </select>
+          <label>Data type</label>
+          <div className="prop-readonly">${derivedType || '—'}</div>
+          <p className="prop-hint">
+            Inherited from the source output port. To change it, edit the
+            source node's port type.
+          </p>
         </div>
         <button className="btn-save" onClick=${save}>Apply</button>
       </div>

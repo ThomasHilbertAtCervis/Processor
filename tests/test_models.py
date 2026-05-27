@@ -154,6 +154,34 @@ class TestNode:
         assert node.position == {"x": 0.0, "y": 0.0}
         assert node.to_dict()["position"] == {"x": 0.0, "y": 0.0}
 
+    def test_legacy_branch_condition_input_is_dropped_on_load(self) -> None:
+        # Branch nodes used to take ``condition`` as a second input port.
+        # Loading an older module must strip it and seed a default
+        # ``condition`` expression in ``data`` so the new activator runs.
+        node = Node.from_dict({
+            "id": "b", "type": "branch",
+            "inputs": [
+                {"name": "value", "type_ref": "any", "kind": "data"},
+                {"name": "condition", "type_ref": "bool", "kind": "data"},
+            ],
+            "outputs": [
+                {"name": "true", "type_ref": "any", "kind": "data"},
+                {"name": "false", "type_ref": "any", "kind": "data"},
+            ],
+            "data": {"label": "Branch"},
+        })
+        assert [p.name for p in node.inputs] == ["value"]
+        assert node.data["condition"] == "value"
+
+    def test_branch_data_condition_is_preserved_on_load(self) -> None:
+        node = Node.from_dict({
+            "id": "b", "type": "branch",
+            "inputs": [{"name": "value", "type_ref": "int", "kind": "data"}],
+            "outputs": [],
+            "data": {"condition": "value > 10"},
+        })
+        assert node.data["condition"] == "value > 10"
+
 
 class TestEdge:
     def test_round_trip(self) -> None:

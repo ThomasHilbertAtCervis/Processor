@@ -9,13 +9,17 @@ from __future__ import annotations
 
 # Order matters: this is the order primitives are presented to humans in the
 # data-type editor and to other agents when they enumerate type identifiers.
+# ``"any"`` is deliberately absent: the product chose strong typing, and the
+# UI flags edges between mismatched types in red so the user notices. Legacy
+# stored modules may still carry ``type_ref="any"``; loading them works, but
+# any edge touching such a port will be highlighted until the user picks a
+# real type from the dropdown.
 PRIMITIVE_TYPE_IDS: tuple[str, ...] = (
     "int",
     "decimal",
     "string",
     "bool",
     "timestamp",
-    "any",
 )
 
 

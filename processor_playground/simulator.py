@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable
 
 from .models import Edge, Module, Node, Port
-from .scripting import SafeScriptInterpreter
+from .scripting import SafeScriptInterpreter, SafeScriptError
 
 
 class SimulatorError(RuntimeError):
@@ -126,9 +126,10 @@ class Simulator:
         # that node. Single path of execution means at most one activation
         # waiting per node at any moment.
         self._waiting: dict[int, _PythonActivation] = {}
-        # db_* nodes accumulate inputs across activator calls until every
-        # declared input port has a value — then the query fires once.
-        self._db_buffers: dict[str, dict[str, Any]] = {}
+        # Nodes that accumulate input fires across activator calls until every
+        # declared input port has a value — then their "ready" semantic fires
+        # once. Used by db_read / db_create / branch / counted_loop.
+        self._input_buffers: dict[str, dict[str, Any]] = {}
         self._databases: dict[str, dict[str, list[dict[str, Any]]]] = databases or {}
 
         frame = self._make_frame(module, record_top_level_output)
@@ -372,12 +373,12 @@ class Simulator:
         """Buffer one input fire for a db node. Returns the complete
         ``{port_name: value}`` dict once every declared input port has
         received a value (and clears the buffer), else ``None``."""
-        buffer = self._db_buffers.setdefault(node.id, {})
+        buffer = self._input_buffers.setdefault(node.id, {})
         buffer[port_name] = value
         needed = {port.name for port in node.inputs}
         if needed and needed.issubset(buffer.keys()):
             params = dict(buffer)
-            self._db_buffers.pop(node.id, None)
+            self._input_buffers.pop(node.id, None)
             return params
         return None
 
@@ -474,6 +475,121 @@ class Simulator:
         out_port = node.outputs[0].name if node.outputs else "created"
         self._fire_from_node(frame, node.id, out_port, inserted)
 
+    # ----------------------------------------------- control-flow activators
+
+    def _activate_branch(
+        self, frame: _Frame, node: Node, port_name: str, value: Any
+    ) -> None:
+        """Route ``value`` to ``true`` or ``false`` based on a static
+        Python expression stored in ``data['condition']``.
+
+        The expression sees the incoming value as ``value`` and the same
+        read-only builtins available to ``python`` nodes
+        (``len/range/min/max/sum``). The branch is one-shot per fire:
+        whichever output matches the expression result emits ``value``
+        unchanged.
+        """
+        if port_name != "value":
+            raise SimulatorError(
+                f"branch node '{node.id}' received a fire on undeclared "
+                f"input port '{port_name}' (only 'value' is supported)"
+            )
+        expression = (node.data.get("condition") or "").strip()
+        if not expression:
+            raise SimulatorError(
+                f"branch node '{node.id}' has no 'condition' expression in "
+                f"its data"
+            )
+        env: dict[str, Any] = {
+            "value": value,
+            "len": len, "range": range,
+            "min": min, "max": max, "sum": sum,
+        }
+        try:
+            result = SafeScriptInterpreter(env).evaluate_expression(expression)
+        except SafeScriptError as exc:
+            raise SimulatorError(
+                f"branch node '{node.id}' condition error: {exc}"
+            ) from exc
+        taken = "true" if bool(result) else "false"
+        self._result.trace.append(
+            {"event": "branch", "node": node.id, "taken": taken,
+             "condition": expression}
+        )
+        self._fire_from_node(frame, node.id, taken, value)
+
+    def _activate_join(
+        self, frame: _Frame, node: Node, port_name: str, value: Any
+    ) -> None:
+        """Merge alternative branches: forward every input arrival to
+        the ``value`` output as it arrives (no buffering).
+        """
+        self._result.trace.append(
+            {"event": "join", "node": node.id, "from_port": port_name}
+        )
+        self._fire_from_node(frame, node.id, "value", value)
+
+    def _activate_counted_loop(
+        self, frame: _Frame, node: Node, port_name: str, value: Any
+    ) -> None:
+        """``for i in range(from, to): fire('index', i)``; then fire ``done``.
+
+        Both ``from`` and ``to`` inputs must arrive before the loop runs.
+        Iterations are dispatched synchronously — the downstream chain of
+        each ``index`` fire runs to completion before the next iteration
+        begins.
+        """
+        buffer = self._input_buffers.setdefault(node.id, {})
+        buffer[port_name] = value
+        if "from" not in buffer or "to" not in buffer:
+            return
+        start_raw = buffer["from"]
+        stop_raw = buffer["to"]
+        self._input_buffers.pop(node.id, None)
+        try:
+            start = int(start_raw)
+            stop = int(stop_raw)
+        except (TypeError, ValueError) as exc:
+            raise SimulatorError(
+                f"counted_loop node '{node.id}' requires integer 'from' and "
+                f"'to' inputs; got from={start_raw!r}, to={stop_raw!r}"
+            ) from exc
+        self._result.trace.append(
+            {"event": "counted_loop", "node": node.id,
+             "from": start, "to": stop}
+        )
+        count = 0
+        for index in range(start, stop):
+            count += 1
+            self._fire_from_node(frame, node.id, "index", index)
+        self._fire_from_node(frame, node.id, "done", count)
+
+    def _activate_foreach(
+        self, frame: _Frame, node: Node, port_name: str, value: Any
+    ) -> None:
+        """Iterate ``collection`` (list/tuple or dict); fire ``item`` and
+        ``key`` per element, then ``done`` with the original collection.
+
+        For sequences ``key`` is the integer index; for dicts ``key`` is
+        the mapping key and ``item`` is the value.
+        """
+        if isinstance(value, dict):
+            entries = list(value.items())
+        elif isinstance(value, (list, tuple)):
+            entries = list(enumerate(value))
+        else:
+            raise SimulatorError(
+                f"foreach node '{node.id}' expects a list, tuple or dict "
+                f"on its 'collection' input; got {type(value).__name__}"
+            )
+        self._result.trace.append(
+            {"event": "foreach", "node": node.id, "count": len(entries)}
+        )
+        for key, item in entries:
+            self._fire_from_node(frame, node.id, "key", key)
+            self._fire_from_node(frame, node.id, "item", item)
+        self._fire_from_node(frame, node.id, "done", value)
+
 
 def _find_port(ports: Iterable[Port], name: str) -> Port | None:
     for port in ports:
@@ -491,4 +607,8 @@ _ACTIVATORS: dict[str, Callable[[Simulator, _Frame, Node, str, Any], None]] = {
     "submodule": Simulator._activate_submodule,
     "db_read": Simulator._activate_db_read,
     "db_create": Simulator._activate_db_create,
+    "branch": Simulator._activate_branch,
+    "join": Simulator._activate_join,
+    "counted_loop": Simulator._activate_counted_loop,
+    "foreach": Simulator._activate_foreach,
 }

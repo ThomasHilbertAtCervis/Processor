@@ -511,6 +511,27 @@ button {
   stroke-width: 2.5;
 }
 
+/* Strong-typing: edges connecting ports of different ``type_ref`` get the
+   ``type-mismatch`` class from app.js. We render them in red so the user
+   notices and fixes the type on one of the two ports. */
+.react-flow__edge.type-mismatch .react-flow__edge-path {
+  stroke: #dc2626;
+  stroke-width: 2.5;
+}
+.react-flow__edge.type-mismatch.selected .react-flow__edge-path,
+.react-flow__edge.type-mismatch:focus .react-flow__edge-path {
+  stroke: #b91c1c;
+  stroke-width: 3;
+}
+.react-flow__edge.type-mismatch .react-flow__edge-path,
+.react-flow__edge.type-mismatch .react-flow__edge-textbg {
+  filter: drop-shadow(0 0 1px rgba(220, 38, 38, 0.6));
+}
+.react-flow__edge.type-mismatch marker path {
+  fill: #dc2626;
+  stroke: #dc2626;
+}
+
 .palette-start,
 .palette-end,
 .palette-event,
@@ -615,6 +636,15 @@ button {
   border-radius: 3px;
   padding: 0 4px;
   font-size: 11px;
+}
+.prop-readonly {
+  background: #0f131a;
+  border: 1px solid #2a2f3a;
+  border-radius: 4px;
+  padding: 4px 8px;
+  color: #cbd2dc;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
 }
 .prop-portlist { display: flex; flex-wrap: wrap; gap: 4px; }
 .prop-port {
@@ -816,6 +846,34 @@ button {
 .palette-db_read, .palette-db_create {
   background: #fef3c7;
   color: #78350f;
+}
+
+/* ---------------------------------------------------- Control-flow nodes */
+
+.node-controlflow {
+  background: #fff;
+  border: 1.5px solid #6366f1;
+  border-radius: 6px;
+  min-width: 180px;
+  font-size: 12px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+}
+.node-controlflow-header {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  background: #eef2ff;
+  padding: 6px 8px;
+  border-bottom: 1px solid #c7d2fe;
+  border-radius: 6px 6px 0 0;
+}
+.node-controlflow-icon { font-weight: 700; }
+.node-controlflow-name { font-weight: 700; color: #3730a3; }
+
+.palette-branch, .palette-join,
+.palette-counted_loop, .palette-foreach {
+  background: #eef2ff;
+  color: #3730a3;
 }
 
 /* ---------------------------------------------------- DatabasePanel */

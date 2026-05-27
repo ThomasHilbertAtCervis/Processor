@@ -169,7 +169,7 @@ class TestDataTypeEndpoints:
 
     def test_primitives_endpoint(self, client: TestClient) -> None:
         body = client.get("/api/data-types/primitives").json()
-        assert body == ["int", "decimal", "string", "bool", "timestamp", "any"]
+        assert body == ["int", "decimal", "string", "bool", "timestamp"]
 
 
 # ----------------------------------------------------------------- run
@@ -229,7 +229,11 @@ class TestMiscEndpoints:
     def test_node_kinds_catalog(self, client: TestClient) -> None:
         body = client.get("/api/node-kinds").json()
         types = [entry["type"] for entry in body]
-        assert types == ["module_input", "module_output", "python", "submodule", "db_read", "db_create"]
+        assert types == [
+            "module_input", "module_output", "python", "submodule",
+            "db_read", "db_create",
+            "branch", "join", "counted_loop", "foreach",
+        ]
         for entry in body:
             assert entry["palette_label"]
             assert entry["default_label"]

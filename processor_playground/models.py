@@ -181,12 +181,23 @@ class Node:
             "x": float(raw_pos.get("x", 0.0)),
             "y": float(raw_pos.get("y", 0.0)),
         }
+        node_type = payload["type"]
+        inputs = [Port.from_dict(p) for p in payload.get("inputs", [])]
+        outputs = [Port.from_dict(p) for p in payload.get("outputs", [])]
+        data = dict(payload.get("data", {}))
+        # Branch nodes used to take ``condition`` as a second input port;
+        # the redesign moved it onto ``data['condition']`` as a static
+        # Python expression. Strip any leftover input port from older
+        # files so the saved graph round-trips into the new shape.
+        if node_type == "branch":
+            inputs = [p for p in inputs if p.name != "condition"]
+            data.setdefault("condition", "value")
         return Node(
             id=payload["id"],
-            type=payload["type"],
-            inputs=[Port.from_dict(p) for p in payload.get("inputs", [])],
-            outputs=[Port.from_dict(p) for p in payload.get("outputs", [])],
-            data=dict(payload.get("data", {})),
+            type=node_type,
+            inputs=inputs,
+            outputs=outputs,
+            data=data,
             position=position,
         )
 

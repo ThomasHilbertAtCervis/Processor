@@ -49,13 +49,16 @@ function dehydrateNodeForWire(node) {
 // (the user adds more from the script as needed), and a submodule starts
 // portless until the user picks which module to embed.
 function makeNodeDefaults(type, label) {
-  const defaultDataPort = (name) => ({ name, type_ref: 'any', kind: 'data' });
+  // Default to a real primitive ("string") rather than "any": the product
+  // requires strong typing and the UI does not offer "any" as a selectable
+  // option, so we must not seed it on freshly-dropped nodes either.
+  const defaultDataPort = (name) => ({ name, type_ref: 'string', kind: 'data' });
   if (type === 'module_input') {
     const outputs = [defaultDataPort('value')];
     return {
       inputs: [],
       outputs,
-      data: { label, signal_name: '', signal_type: 'any', _ports: { inputs: [], outputs } },
+      data: { label, signal_name: '', signal_type: 'string', _ports: { inputs: [], outputs } },
     };
   }
   if (type === 'module_output') {
@@ -63,7 +66,7 @@ function makeNodeDefaults(type, label) {
     return {
       inputs,
       outputs: [],
-      data: { label, signal_name: '', signal_type: 'any', _ports: { inputs, outputs: [] } },
+      data: { label, signal_name: '', signal_type: 'string', _ports: { inputs, outputs: [] } },
     };
   }
   if (type === 'python') {
@@ -93,6 +96,57 @@ function makeNodeDefaults(type, label) {
         query: defaultQuery,
         _ports: { inputs, outputs },
       },
+    };
+  }
+  if (type === 'branch') {
+    const inputs = [defaultDataPort('value')];
+    const outputs = [defaultDataPort('true'), defaultDataPort('false')];
+    return {
+      inputs,
+      outputs,
+      data: {
+        label,
+        condition: 'value',
+        value_type: 'string',
+        _ports: { inputs, outputs },
+      },
+    };
+  }
+  if (type === 'join') {
+    const inputs = [defaultDataPort('a'), defaultDataPort('b')];
+    const outputs = [defaultDataPort('value')];
+    return {
+      inputs,
+      outputs,
+      data: { label, _ports: { inputs, outputs } },
+    };
+  }
+  if (type === 'counted_loop') {
+    const inputs = [
+      { name: 'from', type_ref: 'int', kind: 'data' },
+      { name: 'to', type_ref: 'int', kind: 'data' },
+    ];
+    const outputs = [
+      { name: 'index', type_ref: 'int', kind: 'data' },
+      defaultDataPort('done'),
+    ];
+    return {
+      inputs,
+      outputs,
+      data: { label, _ports: { inputs, outputs } },
+    };
+  }
+  if (type === 'foreach') {
+    const inputs = [defaultDataPort('collection')];
+    const outputs = [
+      defaultDataPort('item'),
+      defaultDataPort('key'),
+      defaultDataPort('done'),
+    ];
+    return {
+      inputs,
+      outputs,
+      data: { label, _ports: { inputs, outputs } },
     };
   }
   // submodule and any future kind: empty until configured.
@@ -125,13 +179,13 @@ export function extractPlaceholders(query) {
 function deriveDbPorts(nodeType, query) {
   const placeholders = extractPlaceholders(query);
   const inputs = placeholders.length
-    ? placeholders.map((name) => ({ name, type_ref: 'any', kind: 'data' }))
+    ? placeholders.map((name) => ({ name, type_ref: 'string', kind: 'data' }))
     // No placeholders -> a single "trigger" input so the node is reachable
     // from the graph at all (queries with all-literal values still need a
     // wire to know when to fire).
-    : [{ name: 'trigger', type_ref: 'any', kind: 'data' }];
+    : [{ name: 'trigger', type_ref: 'string', kind: 'data' }];
   const outputName = nodeType === 'db_read' ? 'rows' : 'created';
-  const outputs = [{ name: outputName, type_ref: 'any', kind: 'data' }];
+  const outputs = [{ name: outputName, type_ref: 'string', kind: 'data' }];
   return { inputs, outputs };
 }
 
@@ -225,6 +279,33 @@ function App() {
     }
     return out;
   }, [nodes]);
+
+  // Strong typing: every edge must connect ports of the same ``type_ref``.
+  // We compute a className for each edge so React Flow renders mismatched
+  // wires in red (see style.css ``.react-flow__edge.type-mismatch``). The
+  // backend tolerates ``type_ref="any"`` for legacy data, but the user can
+  // no longer pick it from the dropdown, so any edge touching an ``any``
+  // port will mismatch a typed port and be highlighted until the user
+  // fixes the type.
+  const decoratedEdges = useMemo(() => {
+    const nodeById = new Map(nodes.map((node) => [node.id, node]));
+    const portType = (node, handleName, direction) => {
+      if (!node || !handleName) return null;
+      const list = direction === 'source' ? node.outputs : node.inputs;
+      const port = (list || []).find((candidate) => candidate.name === handleName);
+      return port ? port.type_ref || null : null;
+    };
+    return edges.map((edge) => {
+      const sourceType = portType(nodeById.get(edge.source), edge.sourceHandle, 'source');
+      const targetType = portType(nodeById.get(edge.target), edge.targetHandle, 'target');
+      const mismatch = sourceType && targetType && sourceType !== targetType;
+      const existingClass = (edge.className || '').replace(/\btype-mismatch\b/g, '').trim();
+      const className = mismatch
+        ? (existingClass ? `${existingClass} type-mismatch` : 'type-mismatch')
+        : (existingClass || undefined);
+      return { ...edge, className };
+    });
+  }, [edges, nodes]);
 
   const showStatus = useCallback((message, isErr = false) => {
     if (showStatusRef.current) {
@@ -383,6 +464,52 @@ function App() {
 
   const onConnect = useCallback((connection) => {
     setEdges((items) => addEdge({ ...connection, markerEnd: { type: EDGE_MARKER } }, items));
+    // Type inheritance: most nodes' input port types are dictated by the
+    // wire feeding them (Module Output, Branch, Join, Counted Loop, For
+    // Each, DB Read, DB Create, Python). Module Input is the only node
+    // whose type is user-declared (it has no incoming wire) — it's left
+    // alone here. Submodule input types come from the linked module's
+    // own signature, so we don't override them either.
+    setNodes((items) => {
+      const source = items.find((node) => node.id === connection.source);
+      if (!source) return items;
+      const sourcePort = (source.outputs || []).find((p) => p.name === connection.sourceHandle);
+      if (!sourcePort) return items;
+      const inferred = sourcePort.type_ref;
+      if (!inferred) return items;
+      return items.map((node) => {
+        if (node.id !== connection.target) return node;
+        if (node.type === 'module_input' || node.type === 'submodule') return node;
+        let inputs = (node.inputs || []).map((p) => (
+          p.name === connection.targetHandle ? { ...p, type_ref: inferred } : p
+        ));
+        let outputs = node.outputs || [];
+        let extraData = {};
+        // Branch: value, true, false ports always share one type.
+        if (node.type === 'branch' && connection.targetHandle === 'value') {
+          inputs = inputs.map((p) => ({ ...p, type_ref: inferred }));
+          outputs = outputs.map((p) => ({ ...p, type_ref: inferred }));
+          extraData.value_type = inferred;
+        }
+        // Join: every input plus the value output share one type.
+        if (node.type === 'join') {
+          inputs = inputs.map((p) => ({ ...p, type_ref: inferred }));
+          outputs = outputs.map((p) => (
+            p.name === 'value' ? { ...p, type_ref: inferred } : p
+          ));
+        }
+        return {
+          ...node,
+          inputs,
+          outputs,
+          data: {
+            ...node.data,
+            ...extraData,
+            _ports: { inputs, outputs },
+          },
+        };
+      });
+    });
   }, []);
 
   const onNodeClick = useCallback((_, node) => setSelected({ type: 'node', id: node.id }), []);
@@ -410,11 +537,22 @@ function App() {
       // Module.outputs round-trips with the right type_ref.
       if (node.type === 'module_input' && newData.signal_type !== undefined) {
         const port = (outputs && outputs[0]) || { name: 'value', kind: 'data' };
-        outputs = [{ ...port, type_ref: newData.signal_type || 'any' }];
+        outputs = [{ ...port, type_ref: newData.signal_type || 'string' }];
       }
       if (node.type === 'module_output' && newData.signal_type !== undefined) {
         const port = (inputs && inputs[0]) || { name: 'value', kind: 'data' };
-        inputs = [{ ...port, type_ref: newData.signal_type || 'any' }];
+        inputs = [{ ...port, type_ref: newData.signal_type || 'string' }];
+      }
+      // The branch node's true/false outputs always have the same data
+      // type as its single value input. The properties panel edits one
+      // ``value_type`` field; mirror it onto all three ports.
+      if (node.type === 'branch' && newData.value_type !== undefined) {
+        const t = newData.value_type || 'string';
+        inputs = [{ name: 'value', type_ref: t, kind: 'data' }];
+        outputs = [
+          { name: 'true', type_ref: t, kind: 'data' },
+          { name: 'false', type_ref: t, kind: 'data' },
+        ];
       }
       // db_read / db_create derive their inputs from the :placeholders in
       // their SQL query. Whenever the query (or kind) changes we rebuild
@@ -701,7 +839,7 @@ function App() {
               key=${currentModule.module_id}
               currentModule=${currentModule}
               nodes=${nodes.map((node) => ({ ...node, type: node.type || 'python' }))}
-              edges=${edges}
+              edges=${decoratedEdges}
               onNodesChange=${onNodesChange}
               onEdgesChange=${onEdgesChange}
               onConnect=${onConnect}

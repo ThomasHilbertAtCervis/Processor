@@ -532,3 +532,313 @@ class TestDatabaseNodes:
         )
         with pytest.raises(SimulatorError, match="SELECT"):
             Simulator().run(module, input_signal="t", input_value=1, databases={"shop": {}})
+
+
+# --------------------------------------------------------- control-flow nodes
+
+def _branch(node_id: str, *, condition: str = "value", value_type: str = "any") -> Node:
+    return Node(
+        id=node_id, type="branch",
+        inputs=[Port("value", type_ref=value_type)],
+        outputs=[
+            Port("true", type_ref=value_type),
+            Port("false", type_ref=value_type),
+        ],
+        data={"condition": condition},
+    )
+
+
+def _join(node_id: str, input_names: list[str]) -> Node:
+    return Node(
+        id=node_id, type="join",
+        inputs=[Port(name) for name in input_names],
+        outputs=[Port("value")],
+    )
+
+
+def _counted_loop(node_id: str) -> Node:
+    return Node(
+        id=node_id, type="counted_loop",
+        inputs=[Port("from", type_ref="int"), Port("to", type_ref="int")],
+        outputs=[Port("index", type_ref="int"), Port("done")],
+    )
+
+
+def _foreach(node_id: str) -> Node:
+    return Node(
+        id=node_id, type="foreach",
+        inputs=[Port("collection")],
+        outputs=[Port("item"), Port("key"), Port("done")],
+    )
+
+
+class TestBranchNode:
+    def _build(self, condition: str = "value > 0") -> Module:
+        return _mod(
+            inputs=[Signal("v")],
+            outputs=[Signal("t"), Signal("f")],
+            nodes=[
+                _input("iv", "v"),
+                _branch("b", condition=condition),
+                _output("ot", "t"),
+                _output("of", "f"),
+            ],
+            edges=[
+                _wire("e1", "iv", "value", "b", "value"),
+                _wire("e3", "b", "true", "ot", "value"),
+                _wire("e4", "b", "false", "of", "value"),
+            ],
+        )
+
+    def test_routes_to_true_when_condition_truthy(self) -> None:
+        module = self._build("value > 10")
+        result = Simulator().run(module, input_signal="v", input_value=42)
+        assert result["outputs"] == {"t": [42], "f": []}
+
+    def test_routes_to_false_when_condition_falsy(self) -> None:
+        module = self._build("value > 10")
+        result = Simulator().run(module, input_signal="v", input_value=3)
+        assert result["outputs"] == {"t": [], "f": [3]}
+
+    def test_value_passes_through_unchanged(self) -> None:
+        # The branch must not transform the value — both outputs are the
+        # same data type as the input and carry the original payload.
+        module = self._build("len(value) > 2")
+        payload = {"id": 7, "tags": ["a", "b"]}
+        result = Simulator().run(module, input_signal="v", input_value=payload)
+        # len({...}) == 2, not > 2 → false branch.
+        assert result["outputs"]["f"] == [payload]
+        assert result["outputs"]["f"][0] is payload
+
+    def test_condition_can_use_subscript_and_comparisons(self) -> None:
+        module = self._build("value['region'] == 'EU'")
+        eu = {"region": "EU", "id": 1}
+        us = {"region": "US", "id": 2}
+        assert Simulator().run(module, input_signal="v", input_value=eu)["outputs"] == {
+            "t": [eu], "f": []
+        }
+        assert Simulator().run(module, input_signal="v", input_value=us)["outputs"] == {
+            "t": [], "f": [us]
+        }
+
+    def test_missing_condition_raises(self) -> None:
+        module = _mod(
+            inputs=[Signal("v")], outputs=[],
+            nodes=[
+                _input("i", "v"),
+                Node(
+                    id="b", type="branch",
+                    inputs=[Port("value")],
+                    outputs=[Port("true"), Port("false")],
+                    data={},
+                ),
+            ],
+            edges=[_wire("e", "i", "value", "b", "value")],
+        )
+        with pytest.raises(SimulatorError, match="no 'condition' expression"):
+            Simulator().run(module, input_signal="v", input_value=1)
+
+    def test_invalid_condition_expression_raises(self) -> None:
+        module = self._build("value..bad")
+        with pytest.raises(SimulatorError, match="condition error"):
+            Simulator().run(module, input_signal="v", input_value=1)
+
+
+class TestJoinNode:
+    def test_forwards_each_arrival_to_value_output(self) -> None:
+        module = _mod(
+            inputs=[Signal("seed")],
+            outputs=[Signal("out")],
+            nodes=[
+                _input("i", "seed"),
+                _python(
+                    "fan",
+                    "outputs['a'] = inputs['s']\noutputs['b'] = inputs['s'] + 1\n",
+                    inputs=[Port("s")],
+                    outputs=[Port("a"), Port("b")],
+                ),
+                _join("j", ["a", "b"]),
+                _output("o", "out"),
+            ],
+            edges=[
+                _wire("e0", "i", "value", "fan", "s"),
+                _wire("e1", "fan", "a", "j", "a"),
+                _wire("e2", "fan", "b", "j", "b"),
+                _wire("e3", "j", "value", "o", "value"),
+            ],
+        )
+        result = Simulator().run(module, input_signal="seed", input_value=10)
+        # Each arrival on either input fires the output once, preserving
+        # the order of arrival.
+        assert result["outputs"]["out"] == [10, 11]
+
+    def test_only_active_branch_after_branch_node_reaches_join(self) -> None:
+        # branch -> two python passthrough nodes -> join. Only the side
+        # picked by the condition should produce output.
+        module = _mod(
+            inputs=[Signal("seed")],
+            outputs=[Signal("out")],
+            nodes=[
+                _input("i", "seed"),
+                _branch("b", condition="value > 0"),
+                _python(
+                    "lhs", "outputs['o'] = inputs['v'] * 10\n",
+                    inputs=[Port("v")], outputs=[Port("o")],
+                ),
+                _python(
+                    "rhs", "outputs['o'] = inputs['v'] * -1\n",
+                    inputs=[Port("v")], outputs=[Port("o")],
+                ),
+                _join("j", ["a", "b"]),
+                _output("o", "out"),
+            ],
+            edges=[
+                _wire("e1", "i", "value", "b", "value"),
+                _wire("e3", "b", "true", "lhs", "v"),
+                _wire("e4", "b", "false", "rhs", "v"),
+                _wire("e5", "lhs", "o", "j", "a"),
+                _wire("e6", "rhs", "o", "j", "b"),
+                _wire("e7", "j", "value", "o", "value"),
+            ],
+        )
+        assert Simulator().run(module, input_signal="seed", input_value=3)["outputs"]["out"] == [30]
+        assert Simulator().run(module, input_signal="seed", input_value=-2)["outputs"]["out"] == [2]
+
+
+class TestCountedLoopNode:
+    def test_fires_index_per_iteration_then_done_with_count(self) -> None:
+        module = _mod(
+            inputs=[Signal("seed")],
+            outputs=[Signal("each"), Signal("end")],
+            nodes=[
+                _input("i", "seed"),
+                _python(
+                    "prep",
+                    "outputs['f'] = 0\noutputs['t'] = inputs['n']\n",
+                    inputs=[Port("n")],
+                    outputs=[Port("f"), Port("t")],
+                ),
+                _counted_loop("l"),
+                _output("oe", "each"),
+                _output("od", "end"),
+            ],
+            edges=[
+                _wire("e0", "i", "value", "prep", "n"),
+                _wire("e1", "prep", "f", "l", "from"),
+                _wire("e2", "prep", "t", "l", "to"),
+                _wire("e3", "l", "index", "oe", "value"),
+                _wire("e4", "l", "done", "od", "value"),
+            ],
+        )
+        result = Simulator().run(module, input_signal="seed", input_value=3)
+        assert result["outputs"]["each"] == [0, 1, 2]
+        assert result["outputs"]["end"] == [3]
+
+    def test_empty_range_fires_only_done(self) -> None:
+        module = _mod(
+            inputs=[Signal("seed")],
+            outputs=[Signal("each"), Signal("end")],
+            nodes=[
+                _input("i", "seed"),
+                _python(
+                    "prep",
+                    "outputs['f'] = 5\noutputs['t'] = 5\n",
+                    inputs=[Port("n")],
+                    outputs=[Port("f"), Port("t")],
+                ),
+                _counted_loop("l"),
+                _output("oe", "each"),
+                _output("od", "end"),
+            ],
+            edges=[
+                _wire("e0", "i", "value", "prep", "n"),
+                _wire("e1", "prep", "f", "l", "from"),
+                _wire("e2", "prep", "t", "l", "to"),
+                _wire("e3", "l", "index", "oe", "value"),
+                _wire("e4", "l", "done", "od", "value"),
+            ],
+        )
+        result = Simulator().run(module, input_signal="seed", input_value=0)
+        assert result["outputs"]["each"] == []
+        assert result["outputs"]["end"] == [0]
+
+    def test_non_integer_bounds_raise(self) -> None:
+        module = _mod(
+            inputs=[Signal("seed")],
+            outputs=[],
+            nodes=[
+                _input("i", "seed"),
+                _python(
+                    "prep",
+                    "outputs['f'] = 0\noutputs['t'] = 'oops'\n",
+                    inputs=[Port("n")],
+                    outputs=[Port("f"), Port("t")],
+                ),
+                _counted_loop("l"),
+            ],
+            edges=[
+                _wire("e0", "i", "value", "prep", "n"),
+                _wire("e1", "prep", "f", "l", "from"),
+                _wire("e2", "prep", "t", "l", "to"),
+            ],
+        )
+        with pytest.raises(SimulatorError, match="integer 'from' and 'to'"):
+            Simulator().run(module, input_signal="seed", input_value=1)
+
+
+class TestForeachNode:
+    def test_iterates_list_firing_item_and_key_per_element(self) -> None:
+        module = _mod(
+            inputs=[Signal("items")],
+            outputs=[Signal("each"), Signal("idx"), Signal("end")],
+            nodes=[
+                _input("i", "items"),
+                _foreach("f"),
+                _output("oe", "each"),
+                _output("oi", "idx"),
+                _output("od", "end"),
+            ],
+            edges=[
+                _wire("e0", "i", "value", "f", "collection"),
+                _wire("e1", "f", "item", "oe", "value"),
+                _wire("e2", "f", "key", "oi", "value"),
+                _wire("e3", "f", "done", "od", "value"),
+            ],
+        )
+        result = Simulator().run(module, input_signal="items", input_value=["a", "b", "c"])
+        assert result["outputs"]["each"] == ["a", "b", "c"]
+        assert result["outputs"]["idx"] == [0, 1, 2]
+        assert result["outputs"]["end"] == [["a", "b", "c"]]
+
+    def test_iterates_dict_firing_value_per_entry_with_key(self) -> None:
+        module = _mod(
+            inputs=[Signal("d")],
+            outputs=[Signal("each"), Signal("idx")],
+            nodes=[
+                _input("i", "d"),
+                _foreach("f"),
+                _output("oe", "each"),
+                _output("oi", "idx"),
+            ],
+            edges=[
+                _wire("e0", "i", "value", "f", "collection"),
+                _wire("e1", "f", "item", "oe", "value"),
+                _wire("e2", "f", "key", "oi", "value"),
+            ],
+        )
+        result = Simulator().run(module, input_signal="d", input_value={"a": 1, "b": 2})
+        assert result["outputs"]["each"] == [1, 2]
+        assert result["outputs"]["idx"] == ["a", "b"]
+
+    def test_non_iterable_raises(self) -> None:
+        module = _mod(
+            inputs=[Signal("x")],
+            outputs=[],
+            nodes=[
+                _input("i", "x"),
+                _foreach("f"),
+            ],
+            edges=[_wire("e", "i", "value", "f", "collection")],
+        )
+        with pytest.raises(SimulatorError, match="expects a list, tuple or dict"):
+            Simulator().run(module, input_signal="x", input_value=42)

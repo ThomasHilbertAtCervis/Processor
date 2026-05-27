@@ -131,11 +131,12 @@ def test_data_types_catalogs_templates_and_script_test_via_mcp(tmp_path: Path) -
         primitives = _decode_tool_result_payload(
             await session.call_tool("list_primitive_data_types")
         )
-        assert primitives == ["int", "decimal", "string", "bool", "timestamp", "any"]
+        assert primitives == ["int", "decimal", "string", "bool", "timestamp"]
 
         node_kinds = _decode_tool_result_payload(await session.call_tool("list_node_kinds"))
         assert [item["type"] for item in node_kinds] == [
             "module_input", "module_output", "python", "submodule", "db_read", "db_create",
+            "branch", "join", "counted_loop", "foreach",
         ]
 
         saved_data_type = _decode_tool_result_payload(

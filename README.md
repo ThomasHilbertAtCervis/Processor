@@ -41,6 +41,28 @@ Layout at a glance:
 - `processor_playground/api.py` — FastAPI routes + composition root (thin adapter)
 - `processor_playground/static/` — frontend (entry `app.js`; `lib/`, `nodes.js`, `components.js`)
 
+## Data Types
+
+Data types are first-class, global entities that define the shape of data flowing through modules.
+
+### Primitive types
+- `int`, `decimal`, `string`, `bool`, `timestamp`, `any`
+
+### Struct types
+Named records with typed fields. Fields can be:
+- **Simple fields**: `name: string`, `age: int`
+- **Array fields**: `items: Item[]` (array of Item type)
+- **Dictionary fields**: `metadata: string{dict}` (dictionary with string values)
+
+Structs may be arbitrarily nested: a field can reference another struct type.
+
+### Container types
+Standalone arrays and dictionaries with an explicit element type:
+- **Array**: `ShoppingCart[]` (array of ShoppingCart)
+- **Dict**: `dict<string, User>` (dictionary mapping strings to User objects)
+
+All signal payloads, variables, database rows, and API responses are typed using this system.
+
 ## Run
 
 ```bash

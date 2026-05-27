@@ -38,6 +38,29 @@ class TestDataTypeField:
     def test_defaults_to_any(self) -> None:
         assert DataTypeField.from_dict({"name": "x"}).type_ref == "any"
 
+    def test_array_field_round_trip(self) -> None:
+        original = DataTypeField(name="items", type_ref="Item", kind="array")
+        restored = DataTypeField.from_dict(original.to_dict())
+        assert restored.name == "items"
+        assert restored.type_ref == "Item"
+        assert restored.kind == "array"
+
+    def test_dict_field_round_trip(self) -> None:
+        original = DataTypeField(name="lookup", type_ref="string", kind="dict")
+        restored = DataTypeField.from_dict(original.to_dict())
+        assert restored.name == "lookup"
+        assert restored.type_ref == "string"
+        assert restored.kind == "dict"
+
+    def test_to_dict_omits_primitive_kind(self) -> None:
+        # Primitive is the default; omit it to keep payloads smaller
+        field = DataTypeField(name="x", type_ref="int", kind="primitive")
+        assert "kind" not in field.to_dict()
+
+    def test_to_dict_includes_nonprimitive_kind(self) -> None:
+        field = DataTypeField(name="x", type_ref="Item", kind="array")
+        assert field.to_dict()["kind"] == "array"
+
 
 class TestDataType:
     def test_struct_round_trip(self) -> None:
@@ -48,6 +71,27 @@ class TestDataType:
             fields=[DataTypeField("location", "string")],
         )
         assert DataType.from_dict(original.to_dict()) == original
+
+    def test_struct_with_compound_fields_round_trip(self) -> None:
+        original = DataType(
+            type_id="Order",
+            name="Order",
+            kind="struct",
+            fields=[
+                DataTypeField("items", "Item", kind="array"),
+                DataTypeField("metadata", "string", kind="dict"),
+                DataTypeField("customer", "Customer", kind="primitive"),
+            ],
+        )
+        restored = DataType.from_dict(original.to_dict())
+        assert restored.type_id == "Order"
+        assert len(restored.fields) == 3
+        assert restored.fields[0].name == "items"
+        assert restored.fields[0].type_ref == "Item"
+        assert restored.fields[0].kind == "array"
+        assert restored.fields[1].name == "metadata"
+        assert restored.fields[1].kind == "dict"
+        assert restored.fields[2].kind == "primitive"
 
     def test_array_round_trip(self) -> None:
         original = DataType(type_id="Bag", name="Bag", kind="array", element_type="string")

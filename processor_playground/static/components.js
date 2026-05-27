@@ -284,7 +284,7 @@ export function PropertiesPanel({ selected, nodes, edges, onUpdateNode, onUpdate
 
 export function DataTypePanel({ dataTypes, primitives, onSave, onDelete }) {
   const [editing, setEditing] = useState(null);
-  const [newField, setNewField] = useState({ name: '', type_ref: 'string' });
+  const [newField, setNewField] = useState({ name: '', type_ref: 'string', kind: 'primitive' });
 
   const beginNew = () => setEditing({ type_id: '', name: '', kind: 'struct', fields: [], element_type: 'any' });
   const beginEdit = (dataType) => setEditing(JSON.parse(JSON.stringify(dataType)));
@@ -326,7 +326,9 @@ export function DataTypePanel({ dataTypes, primitives, onSave, onDelete }) {
                 ${(editing.fields || []).map((field, idx) => html`
                   <div key=${idx} className="dt-field-row">
                     <span>${field.name}</span>
-                    <span className="dt-field-type">(${field.type_ref})</span>
+                    <span className="dt-field-type">
+                      ${field.kind && field.kind !== 'primitive' ? `${field.kind}<${field.type_ref}>` : `(${field.type_ref})`}
+                    </span>
                     <button className="btn-icon" onClick=${() => setEditing((draft) => ({ ...draft, fields: draft.fields.filter((_, i) => i !== idx) }))}>✕</button>
                   </div>
                 `)}
@@ -336,6 +338,11 @@ export function DataTypePanel({ dataTypes, primitives, onSave, onDelete }) {
                     placeholder="field name"
                     onInput=${(event) => setNewField((draft) => ({ ...draft, name: event.target.value }))}
                   />
+                  <select value=${newField.kind} onChange=${(event) => setNewField((draft) => ({ ...draft, kind: event.target.value }))}>
+                    <option value="primitive">Type</option>
+                    <option value="array">Array of</option>
+                    <option value="dict">Dict of</option>
+                  </select>
                   <select value=${newField.type_ref} onChange=${(event) => setNewField((draft) => ({ ...draft, type_ref: event.target.value }))}>
                     ${allTypes.map((typeName) => html`<option key=${typeName} value=${typeName}>${typeName}</option>`)}
                   </select>
@@ -346,9 +353,9 @@ export function DataTypePanel({ dataTypes, primitives, onSave, onDelete }) {
                       }
                       setEditing((draft) => ({
                         ...draft,
-                        fields: [...(draft.fields || []), { name: newField.name.trim(), type_ref: newField.type_ref }],
+                        fields: [...(draft.fields || []), { name: newField.name.trim(), type_ref: newField.type_ref, kind: newField.kind }],
                       }));
-                      setNewField({ name: '', type_ref: 'string' });
+                      setNewField({ name: '', type_ref: 'string', kind: 'primitive' });
                     }}
                   >
                     + Add
@@ -405,7 +412,12 @@ export function DataTypePanel({ dataTypes, primitives, onSave, onDelete }) {
             ? html`
                 <div className="dt-item-fields">
                   ${(dataType.fields || []).map((field, idx) => html`
-                    <div key=${`${dataType.type_id}-${idx}`} className="dt-item-field">${field.name} (${field.type_ref})</div>
+                    <div key=${`${dataType.type_id}-${idx}`} className="dt-item-field">
+                      ${field.name}
+                      ${field.kind && field.kind !== 'primitive'
+                        ? html`<span className="dt-field-kind">${field.kind}&lt;${field.type_ref}&gt;</span>`
+                        : html`<span className="dt-field-kind">(${field.type_ref})</span>`}
+                    </div>
                   `)}
                 </div>
               `
@@ -756,6 +768,7 @@ export function Sidebar({
   currentModule,
   activeTab,
   setActiveTab,
+  onResizerMouseDown,
 }) {
   const [creatingModule, setCreatingModule] = useState(false);
   const [newModuleId, setNewModuleId] = useState('');
@@ -868,6 +881,7 @@ export function Sidebar({
           `)}
         </div>
       `}
+      <div className="sidebar-resizer" onMouseDown=${onResizerMouseDown}></div>
     </div>
   `;
 }

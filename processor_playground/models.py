@@ -18,15 +18,34 @@ from typing import Any, Literal
 
 @dataclass
 class DataTypeField:
+    """A field in a struct type.
+    
+    A field can be:
+    - A simple type reference: type_ref="int", kind="primitive"
+    - An array: type_ref="Item", kind="array"
+    - A dictionary: type_ref="string", kind="dict" (dict value type)
+    """
     name: str
     type_ref: str
+    kind: Literal["primitive", "array", "dict"] = "primitive"
 
     @staticmethod
     def from_dict(payload: dict[str, Any]) -> "DataTypeField":
-        return DataTypeField(name=payload["name"], type_ref=payload.get("type_ref", "any"))
+        kind = payload.get("kind", "primitive")
+        return DataTypeField(
+            name=payload["name"],
+            type_ref=payload.get("type_ref", "any"),
+            kind=kind,
+        )
 
     def to_dict(self) -> dict[str, Any]:
-        return {"name": self.name, "type_ref": self.type_ref}
+        out: dict[str, Any] = {
+            "name": self.name,
+            "type_ref": self.type_ref,
+        }
+        if self.kind != "primitive":
+            out["kind"] = self.kind
+        return out
 
 
 # ------------------------------------------------------------------- DataType

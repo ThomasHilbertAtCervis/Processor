@@ -24,16 +24,37 @@ button {
   display: flex;
   height: 100vh;
   width: 100vw;
+  --sidebar-width: 360px;
 }
 
 .sidebar {
-  width: 260px;
+  width: var(--sidebar-width, 360px);
   background: #1e2128;
   color: #cdd0d8;
   display: flex;
   flex-direction: column;
   border-right: 1px solid #0f1116;
   overflow-y: auto;
+  position: relative;
+  min-width: 200px;
+  max-width: 600px;
+}
+
+.sidebar-resizer {
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  background: transparent;
+  transition: background 0.2s ease;
+  user-select: none;
+  z-index: 100;
+}
+
+.sidebar-resizer:hover {
+  background: #3a6df0;
 }
 
 .sidebar-logo {

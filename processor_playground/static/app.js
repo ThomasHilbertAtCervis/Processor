@@ -184,10 +184,14 @@ function App() {
   const [status, setStatus] = useState(null);
   const [runResult, setRunResult] = useState(null);
   const [running, setRunning] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(360);
   const reactFlowWrapper = useRef(null);
   const [reactFlowInstance, setReactFlowInstance] = useState(null);
   const saveRef = useRef(() => {});
   const showStatusRef = useRef(null);
+  const resizingRef = useRef(false);
+  const startXRef = useRef(0);
+  const startWidthRef = useRef(0);
   // Live mirror of currentModuleId so async callbacks (in-flight save
   // responses, debounced timers) can tell whether the user has navigated
   // away from the module they were originally working on.
@@ -229,6 +233,34 @@ function App() {
     setStatus({ msg: message, isErr });
     showStatusRef.current = window.setTimeout(() => setStatus(null), 2500);
   }, []);
+
+  const onResizerMouseDown = useCallback((event) => {
+    resizingRef.current = true;
+    startXRef.current = event.clientX;
+    startWidthRef.current = sidebarWidth;
+  }, [sidebarWidth]);
+
+  useEffect(() => {
+    const onMouseMove = (event) => {
+      if (!resizingRef.current) return;
+      const delta = event.clientX - startXRef.current;
+      const newWidth = Math.max(200, Math.min(600, startWidthRef.current + delta));
+      setSidebarWidth(newWidth);
+    };
+
+    const onMouseUp = () => {
+      resizingRef.current = false;
+    };
+
+    if (resizingRef.current) {
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+      return () => {
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+      };
+    }
+  }, [sidebarWidth]);
 
   const refreshModules = useCallback(async () => {
     const modulesPayload = await apiGet('/api/modules');
@@ -633,7 +665,7 @@ function App() {
   }, [refreshDatabases, showStatus]);
 
   return html`
-    <div id="app">
+    <div id="app" style=${{ '--sidebar-width': `${sidebarWidth}px` }}>
       <${Sidebar}
         modules=${modules}
         currentModuleId=${currentModuleId}
@@ -654,6 +686,7 @@ function App() {
         currentModule=${currentModule}
         activeTab=${activeTab}
         setActiveTab=${setActiveTab}
+        onResizerMouseDown=${onResizerMouseDown}
       />
       <div className="main-area">
         ${currentModule

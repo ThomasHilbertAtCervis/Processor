@@ -75,7 +75,7 @@ const SubmoduleNode = ({ data, selected }) => {
         </div>
         <div className="node-submodule-col node-submodule-col-out">
           ${outputs.map((port) => html`
-            <div key=${`out-${port.name}`} className="node-port node-port-out">
+            <div key=${`out-${port.name}`} className="node-port node-port-out" title=${port.type_ref || ''}>
               ${port.type_ref && port.type_ref !== 'any'
                 ? html`<span className="node-port-type">[${port.type_ref}]</span>`
                 : null}
@@ -139,6 +139,7 @@ const ModuleInputNode = ({ data, selected }) => {
           position=${Position.Right}
           id=${port.name}
           className="node-port-handle"
+          title=${port.type_ref || ''}
         />
       `)}
     </div>
@@ -193,7 +194,7 @@ const PythonNode = ({ data, selected }) => {
         </div>
         <div className="node-submodule-col node-submodule-col-out">
           ${outputs.map((port) => html`
-            <div key=${`out-${port.name}`} className="node-port node-port-out">
+            <div key=${`out-${port.name}`} className="node-port node-port-out" title=${port.type_ref || ''}>
               <span className="node-port-label">${port.name}</span>
               <${Handle}
                 type="source"
@@ -238,7 +239,7 @@ const DbNode = ({ data, selected, type }) => {
         </div>
         <div className="node-submodule-col node-submodule-col-out">
           ${outputs.map((port) => html`
-            <div key=${`out-${port.name}`} className="node-port node-port-out">
+            <div key=${`out-${port.name}`} className="node-port node-port-out" title=${port.type_ref || ''}>
               <span className="node-port-label">${port.name}</span>
               <${Handle}
                 type="source"
@@ -295,7 +296,7 @@ const ControlFlowNode = ({ data, selected, type }) => {
         </div>
         <div className="node-submodule-col node-submodule-col-out">
           ${outputs.map((port) => html`
-            <div key=${`out-${port.name}`} className="node-port node-port-out">
+            <div key=${`out-${port.name}`} className="node-port node-port-out" title=${port.type_ref || ''}>
               <span className="node-port-label">${port.name}</span>
               <${Handle}
                 type="source"
